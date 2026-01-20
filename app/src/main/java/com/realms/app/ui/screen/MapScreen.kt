@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import com.google.android.gms.maps.GoogleMapOptions
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.Circle
@@ -25,7 +26,7 @@ fun MapScreen() {
         position = CameraPosition.Builder()
             .target(userLatLng)
             .zoom(initialZoom)
-            .tilt(fixedTilt) // 3D feel
+            .tilt(fixedTilt)
             .bearing(0f)
             .build()
     }
@@ -52,13 +53,18 @@ fun MapScreen() {
         modifier = Modifier.fillMaxSize(),
         cameraPositionState = cameraPositionState,
         uiSettings = uiSettings,
-        properties = properties
+        properties = properties,
+        googleMapOptionsFactory = {
+            GoogleMapOptions().mapId("62f2fd91384b16b631ee0872")
+        }
     ) {
-        // Cerchio raggio 500m
         Circle(
             center = userLatLng,
             radius = 500.0,
-            strokeWidth = 4f
+            strokeWidth = 7f,
+            strokeColor = androidx.compose.ui.graphics.Color(0xFF1B1B1B), // bordo azzurrino
+            fillColor = androidx.compose.ui.graphics.Color(0x77FDF6EC)
+
         )
     }
 }
