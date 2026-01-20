@@ -69,7 +69,7 @@ fun MapScreen() {
             radius = 500.0,
             strokeWidth = 7f,
             strokeColor = androidx.compose.ui.graphics.Color(0xFF1B1B1B), // bordo azzurrino
-            fillColor = androidx.compose.ui.graphics.Color(0x77FDF6EC)
+            fillColor = androidx.compose.ui.graphics.Color(0x55FDF6EC)
 
         )
     }
