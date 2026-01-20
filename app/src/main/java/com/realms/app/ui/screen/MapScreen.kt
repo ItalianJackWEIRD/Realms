@@ -12,6 +12,12 @@ import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.rememberCameraPositionState
+import android.location.Location
+import androidx.compose.runtime.LaunchedEffect
+import com.google.android.gms.maps.CameraUpdateFactory
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 
 @Composable
 fun MapScreen() {
@@ -67,4 +73,70 @@ fun MapScreen() {
 
         )
     }
+
+    val radiusMeters = 500.0
+
+    LaunchedEffect(cameraPositionState.isMoving) {
+        // quando smetti di muovere la camera (rilasci il dito)
+        if (!cameraPositionState.isMoving) {
+            val center = userLatLng
+            val target = cameraPositionState.position.target
+
+            val d = distanceMeters(center, target).toDouble()
+            if (d > radiusMeters) {
+                val clamped = clampToCircleEdge(center, target, radiusMeters)
+
+                // Manteniamo zoom/tilt/bearing attuali, cambiamo solo target
+                val current = cameraPositionState.position
+                val corrected = CameraPosition.Builder(current)
+                    .target(clamped)
+                    .build()
+
+                cameraPositionState.animate(
+                    update = CameraUpdateFactory.newCameraPosition(corrected),
+                    durationMs = 200
+                )
+            }
+        }
+    }
+
 }
+
+private fun distanceMeters(a: LatLng, b: LatLng): Float {
+    val results = FloatArray(1)
+    Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, results)
+    return results[0]
+}
+
+/**
+ * Ritorna il punto sul bordo del cerchio (center, radiusMeters) nella direzione center -> target.
+ * Approssimazione molto buona per 500m.
+ */
+private fun clampToCircleEdge(center: LatLng, target: LatLng, radiusMeters: Double): LatLng {
+    val earthRadius = 6378137.0 // metri (WGS84)
+
+    val lat1 = Math.toRadians(center.latitude)
+    val lon1 = Math.toRadians(center.longitude)
+    val lat2 = Math.toRadians(target.latitude)
+    val lon2 = Math.toRadians(target.longitude)
+
+    // bearing iniziale center -> target
+    val dLon = lon2 - lon1
+    val y = sin(dLon) * cos(lat2)
+    val x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+    val bearing = atan2(y, x) // radianti
+
+    // Destinazione a distanza radiusMeters lungo quel bearing
+    val angDist = radiusMeters / earthRadius
+    val lat3 = asinSafe(sin(lat1) * cos(angDist) + cos(lat1) * sin(angDist) * cos(bearing))
+    val lon3 = lon1 + atan2(
+        sin(bearing) * sin(angDist) * cos(lat1),
+        cos(angDist) - sin(lat1) * sin(lat3)
+    )
+
+    return LatLng(Math.toDegrees(lat3), Math.toDegrees(lon3))
+}
+
+private fun asinSafe(v: Double): Double =
+    kotlin.math.asin(v.coerceIn(-1.0, 1.0))
+
