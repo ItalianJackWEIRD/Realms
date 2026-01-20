@@ -43,7 +43,8 @@ fun MapScreen() {
         MapProperties(
             isMyLocationEnabled = false,
             minZoomPreference = minZoom,
-            maxZoomPreference = maxZoom
+            maxZoomPreference = maxZoom,
+            isBuildingEnabled = true
         )
     }
 
