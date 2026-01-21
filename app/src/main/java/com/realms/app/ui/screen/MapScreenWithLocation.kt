@@ -15,13 +15,7 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMapOptions
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.Circle
-import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.MapProperties
-import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.rememberCameraPositionState
-import com.google.maps.android.compose.Marker
-import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.*
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.math.atan2
@@ -32,7 +26,7 @@ import kotlin.math.sin
 fun MapScreenWithLocation() {
     val context = LocalContext.current
 
-    // Permessi (li gestisci già con LocationPermissionGate, ma qui serve per sicurezza)
+    // Permessi (2.1 li gestisci nel gate, qui è solo safety)
     val hasFine = remember {
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED
@@ -43,17 +37,19 @@ fun MapScreenWithLocation() {
     }
     val hasLocationPermission = hasFine || hasCoarse
 
-    // ✅ Stato: parte da Roma, poi diventa la tua posizione reale
+    // Stato: parte da Roma, poi diventa la tua posizione reale
     var userLatLng by remember { mutableStateOf(LatLng(41.9028, 12.4964)) }
-
 
     val initialZoom = 18f
     val fixedTilt = 60f
     val minZoom = 17f
     val maxZoom = 20f
+    val radiusMeters = 500.0
 
-    // ✅ Centra la camera UNA sola volta quando trovi la location
+    // ✅ Centro UNA volta sola, ma SOLO quando la mappa è caricata
+    var mapLoaded by remember { mutableStateOf(false) }
     var didCenterOnce by remember { mutableStateOf(false) }
+    var pendingCenter by remember { mutableStateOf<LatLng?>(null) }
 
     val cameraPositionState = rememberCameraPositionState {
         position = CameraPosition.Builder()
@@ -67,7 +63,7 @@ fun MapScreenWithLocation() {
     val uiSettings = remember {
         MapUiSettings(
             compassEnabled = true,
-            myLocationButtonEnabled = true,
+            myLocationButtonEnabled = false,
             zoomControlsEnabled = false,
             mapToolbarEnabled = false
         )
@@ -75,14 +71,14 @@ fun MapScreenWithLocation() {
 
     val properties = remember {
         MapProperties(
-            isMyLocationEnabled = false, // se vuoi lo "pallino blu" metti true, ma non serve per 2.2
+            isMyLocationEnabled = false, // se vuoi il pallino blu: metti hasLocationPermission
             minZoomPreference = minZoom,
             maxZoomPreference = maxZoom,
             isBuildingEnabled = true
         )
     }
 
-    // ✅ 2.2: posizione reale (lastLocation -> currentLocation)
+    // ✅ 2.2: prendi posizione reale (last -> current) UNA VOLTA
     LaunchedEffect(hasLocationPermission) {
         if (!hasLocationPermission) return@LaunchedEffect
 
@@ -94,22 +90,7 @@ fun MapScreenWithLocation() {
         if (loc != null) {
             val newPos = LatLng(loc.latitude, loc.longitude)
             userLatLng = newPos
-
-            if (!didCenterOnce) {
-                val newCam = CameraPosition.Builder()
-                    .target(newPos)
-                    .zoom(initialZoom)
-                    .tilt(fixedTilt)
-                    .bearing(0f)
-                    .build()
-
-                cameraPositionState.animate(
-                    update = CameraUpdateFactory.newCameraPosition(newCam),
-                    durationMs = 600
-                )
-
-                didCenterOnce = true
-            }
+            pendingCenter = newPos // <- chiediamo il center appena la mappa è pronta
         }
     }
 
@@ -120,46 +101,74 @@ fun MapScreenWithLocation() {
         properties = properties,
         googleMapOptionsFactory = {
             GoogleMapOptions().mapId("62f2fd91384b16b631ee0872")
+        },
+        onMapLoaded = {
+            mapLoaded = true
         }
     ) {
         Circle(
             center = userLatLng,
-            radius = 500.0,
+            radius = radiusMeters,
             strokeWidth = 7f,
             strokeColor = androidx.compose.ui.graphics.Color(0xFF1B1B1B),
             fillColor = androidx.compose.ui.graphics.Color(0x55FDF6EC)
         )
+
+        // ✅ “personaggio/punto” sempre visibile
         Marker(
             state = MarkerState(position = userLatLng),
             title = "Tu"
         )
     }
 
-    val radiusMeters = 500.0
+    // ✅ Centro camera una volta sola (affidabile): quando mapLoaded e pendingCenter != null
+    LaunchedEffect(mapLoaded, pendingCenter) {
+        val target = pendingCenter
+        if (!mapLoaded || target == null || didCenterOnce) return@LaunchedEffect
 
-    // Clamp come prima: quando smetti di muovere la camera, la riporta dentro al cerchio
-    LaunchedEffect(cameraPositionState.isMoving, userLatLng) {
-        if (!cameraPositionState.isMoving) {
-            val center = userLatLng
-            val target = cameraPositionState.position.target
+        val cam = CameraPosition.Builder()
+            .target(target)
+            .zoom(initialZoom)
+            .tilt(fixedTilt)
+            .bearing(0f)
+            .build()
 
-            val d = distanceMeters(center, target).toDouble()
-            if (d > radiusMeters) {
-                val clamped = clampToCircleEdge(center, target, radiusMeters)
+        // move è più affidabile al primo caricamento rispetto ad animate
+        cameraPositionState.move(CameraUpdateFactory.newCameraPosition(cam))
 
-                val current = cameraPositionState.position
-                val corrected = CameraPosition.Builder(current)
-                    .target(clamped)
-                    .build()
+        didCenterOnce = true
+        pendingCenter = null
+    }
 
-                cameraPositionState.animate(
-                    update = CameraUpdateFactory.newCameraPosition(corrected),
-                    durationMs = 200
-                )
-            }
+    // Clamp: dopo il center, impedisci di uscire dal cerchio
+    LaunchedEffect(cameraPositionState.isMoving, userLatLng, didCenterOnce) {
+        if (!didCenterOnce) return@LaunchedEffect
+        if (cameraPositionState.isMoving) return@LaunchedEffect
+
+        val center = userLatLng
+        val target = cameraPositionState.position.target
+
+        val d = distanceMeters(center, target).toDouble()
+        if (d > radiusMeters) {
+            val clamped = clampToCircleEdge(center, target, radiusMeters)
+
+            val current = cameraPositionState.position
+            val corrected = CameraPosition.Builder(current)
+                .target(clamped)
+                .tilt(fixedTilt)
+                .build()
+
+            cameraPositionState.animate(
+                update = CameraUpdateFactory.newCameraPosition(corrected),
+                durationMs = 200
+            )
         }
     }
 }
+
+// -------------------------
+// Helpers
+// -------------------------
 
 private fun distanceMeters(a: LatLng, b: LatLng): Float {
     val results = FloatArray(1)
@@ -193,7 +202,9 @@ private fun clampToCircleEdge(center: LatLng, target: LatLng, radiusMeters: Doub
 private fun asinSafe(v: Double): Double =
     kotlin.math.asin(v.coerceIn(-1.0, 1.0))
 
-// ---------- Helpers Fused (suspend) ----------
+// -------------------------
+// Fused helpers (2.2)
+// -------------------------
 
 @SuppressLint("MissingPermission")
 private suspend fun com.google.android.gms.location.FusedLocationProviderClient.awaitLastLocationSafe() =
