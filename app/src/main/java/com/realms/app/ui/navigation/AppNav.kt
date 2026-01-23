@@ -1,61 +1,99 @@
 package com.realms.app.ui.navigation
 
-import android.util.Log
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import com.google.firebase.FirebaseApp
-import com.google.firebase.FirebaseOptions
-import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.compose.*
+import com.google.firebase.auth.FirebaseAuth
+import com.realms.app.auth.AuthUiState
+import com.realms.app.ui.screen.LoginScreen
+import com.realms.app.ui.screen.MapScreen
+
+private object Routes {
+    const val LOGIN = "login"
+    const val MAP = "map"
+}
 
 @Composable
 fun AppNav() {
-    val context = LocalContext.current
+    val navController = rememberNavController()
+    val auth = remember { FirebaseAuth.getInstance() }
 
-    var status by remember { mutableStateOf("Checking Firebase...") }
-    var details by remember { mutableStateOf("") }
-
-    LaunchedEffect(Unit) {
-        try {
-            // Prova a inizializzare (anche se già auto-init)
-            FirebaseApp.initializeApp(context)
-
-            val app = FirebaseApp.getInstance()
-            val options: FirebaseOptions = app.options
-
-            status = "✅ Firebase OK"
-            details =
-                "name=${app.name}\n" +
-                        "projectId=${options.projectId}\n" +
-                        "appId=${options.applicationId}\n" +
-                        "apiKey=${options.apiKey.take(6)}..."
-
-            Log.d("FB_MIN", "Firebase OK: $details")
-        } catch (e: Exception) {
-            status = "❌ Firebase NOT initialized"
-            details = (e.message ?: e.toString())
-            Log.e("FB_MIN", "Firebase FAIL", e)
-        }
+    var uiState by remember {
+        mutableStateOf(
+            AuthUiState(
+                user = auth.currentUser,
+                isLoading = false,
+                errorMessage = null
+            )
+        )
     }
 
-    Surface(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(status, style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(12.dp))
-            Text(details)
+    // Listener: aggiorna user su login/logout
+    DisposableEffect(Unit) {
+        val listener = FirebaseAuth.AuthStateListener { fa ->
+            uiState = uiState.copy(
+                user = fa.currentUser,
+                isLoading = false
+            )
+        }
+        auth.addAuthStateListener(listener)
+        onDispose { auth.removeAuthStateListener(listener) }
+    }
 
-            Spacer(Modifier.height(20.dp))
+    NavHost(
+        navController = navController,
+        startDestination = Routes.LOGIN
+    ) {
+        composable(Routes.LOGIN) {
 
-            Text(
-                "Se vedi ✅ Firebase OK, allora il collegamento (google-services.json + plugin) è corretto.\n" +
-                        "Se vedi ❌, non ha letto le options: problema di plugin/json."
+            LaunchedEffect(uiState.user) {
+                if (uiState.user != null) {
+                    navController.navigate(Routes.MAP) {
+                        popUpTo(Routes.LOGIN) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+            }
+
+            LoginScreen(
+                uiState = uiState,
+                onSignIn = { email, password ->
+                    uiState = uiState.copy(isLoading = true, errorMessage = null)
+
+                    auth.signInWithEmailAndPassword(email, password)
+                        .addOnFailureListener { e ->
+                            uiState = uiState.copy(
+                                isLoading = false,
+                                errorMessage = e.message ?: "Errore login"
+                            )
+                        }
+                },
+                onSignUp = { email, password ->
+                    uiState = uiState.copy(isLoading = true, errorMessage = null)
+
+                    auth.createUserWithEmailAndPassword(email, password)
+                        .addOnFailureListener { e ->
+                            uiState = uiState.copy(
+                                isLoading = false,
+                                errorMessage = e.message ?: "Errore registrazione"
+                            )
+                        }
+                }
+            )
+        }
+
+        composable(Routes.MAP) {
+
+            LaunchedEffect(uiState.user) {
+                if (uiState.user == null) {
+                    navController.navigate(Routes.LOGIN) {
+                        popUpTo(Routes.MAP) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+            }
+
+            MapScreen(
+                onLogout = { auth.signOut() }
             )
         }
     }

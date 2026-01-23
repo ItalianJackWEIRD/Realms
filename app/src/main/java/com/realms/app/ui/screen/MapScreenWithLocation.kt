@@ -4,10 +4,13 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.location.Location
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -23,30 +26,31 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 @Composable
-fun MapScreenWithLocation() {
+fun MapScreenWithLocation(
+    onLogout: () -> Unit
+) {
     val context = LocalContext.current
 
-    // Permessi (2.1 li gestisci nel gate, qui è solo safety)
-    val hasFine = remember {
+    // Permessi (ricalcolati ad ogni recomposition)
+    val hasFine =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED
-    }
-    val hasCoarse = remember {
+    val hasCoarse =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED
-    }
     val hasLocationPermission = hasFine || hasCoarse
 
-    // Stato: parte da Roma, poi diventa la tua posizione reale
+    // Stato posizione: parte da Roma
     var userLatLng by remember { mutableStateOf(LatLng(41.9028, 12.4964)) }
 
+    // Config mappa
     val initialZoom = 18f
     val fixedTilt = 60f
     val minZoom = 17f
     val maxZoom = 20f
     val radiusMeters = 500.0
 
-    // ✅ Centro UNA volta sola, ma SOLO quando la mappa è caricata
+    // Center una sola volta quando mappa è pronta
     var mapLoaded by remember { mutableStateOf(false) }
     var didCenterOnce by remember { mutableStateOf(false) }
     var pendingCenter by remember { mutableStateOf<LatLng?>(null) }
@@ -69,16 +73,22 @@ fun MapScreenWithLocation() {
         )
     }
 
-    val properties = remember {
+    val properties = remember(hasLocationPermission) {
         MapProperties(
-            isMyLocationEnabled = false, // se vuoi il pallino blu: metti hasLocationPermission
+            isMyLocationEnabled = hasLocationPermission,
             minZoomPreference = minZoom,
             maxZoomPreference = maxZoom,
             isBuildingEnabled = true
         )
     }
 
-    // ✅ 2.2: prendi posizione reale (last -> current) UNA VOLTA
+    // Marker “Tu” stabile
+    val myMarkerState = remember { MarkerState(position = userLatLng) }
+    LaunchedEffect(userLatLng) {
+        myMarkerState.position = userLatLng
+    }
+
+    // 2.2: prendi posizione reale UNA volta (last -> current)
     LaunchedEffect(hasLocationPermission) {
         if (!hasLocationPermission) return@LaunchedEffect
 
@@ -90,41 +100,51 @@ fun MapScreenWithLocation() {
         if (loc != null) {
             val newPos = LatLng(loc.latitude, loc.longitude)
             userLatLng = newPos
-            pendingCenter = newPos // <- chiediamo il center appena la mappa è pronta
+            pendingCenter = newPos
         }
     }
 
-    GoogleMap(
-        modifier = Modifier.fillMaxSize(),
-        cameraPositionState = cameraPositionState,
-        uiSettings = uiSettings,
-        properties = properties,
-        googleMapOptionsFactory = {
-            GoogleMapOptions().mapId("62f2fd91384b16b631ee0872")
-        },
-        onMapLoaded = {
-            mapLoaded = true
-        }
-    ) {
-        Circle(
-            center = userLatLng,
-            radius = radiusMeters,
-            strokeWidth = 7f,
-            strokeColor = androidx.compose.ui.graphics.Color(0xFF1B1B1B),
-            fillColor = androidx.compose.ui.graphics.Color(0x55FDF6EC)
-        )
+    Box(modifier = Modifier.fillMaxSize()) {
 
-        // ✅ “personaggio/punto” sempre visibile
-        Marker(
-            state = MarkerState(position = userLatLng),
-            title = "Tu"
-        )
+        GoogleMap(
+            modifier = Modifier.fillMaxSize(),
+            cameraPositionState = cameraPositionState,
+            uiSettings = uiSettings,
+            properties = properties,
+            googleMapOptionsFactory = {
+                GoogleMapOptions().mapId("62f2fd91384b16b631ee0872")
+            },
+            onMapLoaded = { mapLoaded = true }
+        ) {
+            Circle(
+                center = userLatLng,
+                radius = radiusMeters,
+                strokeWidth = 7f,
+                strokeColor = androidx.compose.ui.graphics.Color(0xFF1B1B1B),
+                fillColor = androidx.compose.ui.graphics.Color(0x55FDF6EC)
+            )
+
+            Marker(
+                state = myMarkerState,
+                title = "Tu"
+            )
+        }
+
+        // ✅ Logout overlay (top-right)
+        Button(
+            onClick = onLogout,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(12.dp)
+        ) {
+            Text("Logout")
+        }
     }
 
-    // ✅ Centro camera una volta sola (affidabile): quando mapLoaded e pendingCenter != null
+    // Centro camera una volta sola (dopo mapLoaded)
     LaunchedEffect(mapLoaded, pendingCenter) {
-        val target = pendingCenter
-        if (!mapLoaded || target == null || didCenterOnce) return@LaunchedEffect
+        val target = pendingCenter ?: return@LaunchedEffect
+        if (!mapLoaded || didCenterOnce) return@LaunchedEffect
 
         val cam = CameraPosition.Builder()
             .target(target)
@@ -133,14 +153,13 @@ fun MapScreenWithLocation() {
             .bearing(0f)
             .build()
 
-        // move è più affidabile al primo caricamento rispetto ad animate
         cameraPositionState.move(CameraUpdateFactory.newCameraPosition(cam))
 
         didCenterOnce = true
         pendingCenter = null
     }
 
-    // Clamp: dopo il center, impedisci di uscire dal cerchio
+    // Clamp: attivo solo dopo il primo center
     LaunchedEffect(cameraPositionState.isMoving, userLatLng, didCenterOnce) {
         if (!didCenterOnce) return@LaunchedEffect
         if (cameraPositionState.isMoving) return@LaunchedEffect
@@ -167,7 +186,7 @@ fun MapScreenWithLocation() {
 }
 
 // -------------------------
-// Helpers
+// Helpers (clamp)
 // -------------------------
 
 private fun distanceMeters(a: LatLng, b: LatLng): Float {
