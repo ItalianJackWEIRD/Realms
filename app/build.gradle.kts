@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     id("com.google.gms.google-services")
     alias(libs.plugins.kotlin.android) // 🔥 Firebase
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -68,6 +69,16 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.6.0"))
     implementation("com.google.firebase:firebase-auth-ktx")
     implementation(libs.core.ktx)
+
+    // ----------- WEATHER API ----------
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.converter.moshi)
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.logging)
+    implementation(libs.moshi)
+    implementation(libs.moshi.kotlin)
+
+    ksp(libs.moshi.kotlin.codegen)
 
     // ---------- TEST ----------
     testImplementation(libs.junit)

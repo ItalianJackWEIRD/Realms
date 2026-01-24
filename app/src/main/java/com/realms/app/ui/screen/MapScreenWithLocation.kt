@@ -19,6 +19,10 @@ import com.google.android.gms.maps.GoogleMapOptions
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.*
+import android.util.Log
+import com.realms.app.data.weather.WeatherNetwork
+import com.realms.app.data.weather.WeatherUiModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.math.atan2
@@ -40,8 +44,11 @@ fun MapScreenWithLocation(
                 PackageManager.PERMISSION_GRANTED
     val hasLocationPermission = hasFine || hasCoarse
 
-    // Stato posizione: parte da Roma
+    // Stato posizione e meteo: parte da Roma
     var userLatLng by remember { mutableStateOf(LatLng(41.9028, 12.4964)) }
+    var weather by remember { mutableStateOf<WeatherUiModel?>(null) }
+    var weatherError by remember { mutableStateOf<String?>(null) }
+
 
     // Config mappa
     val initialZoom = 18f
@@ -104,6 +111,31 @@ fun MapScreenWithLocation(
         }
     }
 
+    // METEO
+    LaunchedEffect(Unit) {
+        while (true) {
+            val lat = userLatLng.latitude
+            val lon = userLatLng.longitude
+
+            val result = WeatherNetwork.repository.getWeatherFor(lat, lon)
+            result
+                .onSuccess {
+                    weather = it
+                    weatherError = null
+                    Log.d("Weather", "OK: ${it.temperatureC}°C · ${it.label} @ ${it.fetchedAtIso}")
+                }
+                .onFailure { e ->
+                    weather = null // ✅ così l'overlay non mostra dati vecchi
+                    weatherError = e.message ?: "Weather error"
+                    Log.e("Weather", "ERR: $weatherError", e)
+                }
+
+
+            delay(15_000)
+        }
+    }
+
+
     Box(modifier = Modifier.fillMaxSize()) {
 
         GoogleMap(
@@ -139,6 +171,27 @@ fun MapScreenWithLocation(
         ) {
             Text("Logout")
         }
+
+        // ✅ Weather overlay (top-left)
+        Surface(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(12.dp),
+            tonalElevation = 6.dp,
+            shape = MaterialTheme.shapes.medium
+        ) {
+            val text = when {
+                weatherError != null -> "Meteo: offline"
+                weather != null -> "${weather!!.temperatureC}°C · ${weather!!.label}"
+                else -> "Meteo: loading..."
+            }
+
+            Text(
+                text = text,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+            )
+        }
+
     }
 
     // Centro camera una volta sola (dopo mapLoaded)
