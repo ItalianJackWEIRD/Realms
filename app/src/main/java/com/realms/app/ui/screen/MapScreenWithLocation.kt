@@ -4,7 +4,11 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.location.Location
+import android.os.Looper
+import android.util.Log
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -12,6 +16,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.CameraUpdateFactory
@@ -19,10 +26,12 @@ import com.google.android.gms.maps.GoogleMapOptions
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.*
-import android.util.Log
 import com.realms.app.data.weather.WeatherNetwork
 import com.realms.app.data.weather.WeatherUiModel
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.math.atan2
@@ -49,6 +58,8 @@ fun MapScreenWithLocation(
     var weather by remember { mutableStateOf<WeatherUiModel?>(null) }
     var weatherError by remember { mutableStateOf<String?>(null) }
 
+    // FOLLOW state
+    var followOn by remember { mutableStateOf(true) }
 
     // Config mappa
     val initialZoom = 18f
@@ -95,23 +106,68 @@ fun MapScreenWithLocation(
         myMarkerState.position = userLatLng
     }
 
-    // 2.2: prendi posizione reale UNA volta (last -> current)
-    LaunchedEffect(hasLocationPermission) {
+    // =========================
+    // 1) LOCATION UPDATES (real-time)
+    // =========================
+    // Frequenza aggiornamento posizione (modifica qui se vuoi)
+    val locationIntervalMs = 5_000L
+
+    LaunchedEffect(hasLocationPermission, hasFine) {
         if (!hasLocationPermission) return@LaunchedEffect
 
         val fused = LocationServices.getFusedLocationProviderClient(context)
 
+        // Prima: prendi subito una posizione (per non aspettare il primo update)
         val last = fused.awaitLastLocationSafe()
-        val loc = last ?: fused.awaitCurrentLocationSafe(hasFine)
-
-        if (loc != null) {
-            val newPos = LatLng(loc.latitude, loc.longitude)
+        val first = last ?: fused.awaitCurrentLocationSafe(hasFine)
+        if (first != null) {
+            val newPos = LatLng(first.latitude, first.longitude)
             userLatLng = newPos
             pendingCenter = newPos
         }
+
+        // Poi: flusso continuo
+        fused.locationUpdatesFlow(
+            hasFine = hasFine,
+            intervalMs = locationIntervalMs
+        ).collectLatest { loc ->
+            userLatLng = LatLng(loc.latitude, loc.longitude)
+        }
     }
 
-    // METEO
+    // =========================
+    // 2) FOLLOW LOGIC
+    // =========================
+
+    // Se l'utente muove la mappa con gesture -> follow OFF
+    LaunchedEffect(cameraPositionState.cameraMoveStartedReason) {
+        if (cameraPositionState.cameraMoveStartedReason == CameraMoveStartedReason.GESTURE) {
+            followOn = false
+        }
+    }
+
+    // Quando follow è ON: ad ogni update di userLatLng, anima la camera verso l'utente
+    // (solo dopo che la mappa è pronta e dopo il primo center)
+    LaunchedEffect(followOn, userLatLng, mapLoaded, didCenterOnce) {
+        if (!followOn) return@LaunchedEffect
+        if (!mapLoaded) return@LaunchedEffect
+        if (!didCenterOnce) return@LaunchedEffect
+
+        val current = cameraPositionState.position
+        val updated = CameraPosition.Builder(current)
+            .target(userLatLng)
+            .tilt(fixedTilt)
+            .build()
+
+        cameraPositionState.animate(
+            update = CameraUpdateFactory.newCameraPosition(updated),
+            durationMs = 450
+        )
+    }
+
+    // =========================
+    // 3) METEO (ogni 15s)
+    // =========================
     LaunchedEffect(Unit) {
         while (true) {
             val lat = userLatLng.latitude
@@ -125,17 +181,18 @@ fun MapScreenWithLocation(
                     Log.d("Weather", "OK: ${it.temperatureC}°C · ${it.label} @ ${it.fetchedAtIso}")
                 }
                 .onFailure { e ->
-                    weather = null // ✅ così l'overlay non mostra dati vecchi
+                    weather = null
                     weatherError = e.message ?: "Weather error"
                     Log.e("Weather", "ERR: $weatherError", e)
                 }
-
 
             delay(15_000)
         }
     }
 
-
+    // =========================
+    // UI
+    // =========================
     Box(modifier = Modifier.fillMaxSize()) {
 
         GoogleMap(
@@ -192,9 +249,33 @@ fun MapScreenWithLocation(
             )
         }
 
+        // ✅ Follow button (bottom-right)
+        FloatingActionButton(
+            onClick = {
+                followOn = true
+                // forza anche un "center" immediato, così non aspetti l'animazione next update
+                if (mapLoaded) {
+                    val current = cameraPositionState.position
+                    val updated = CameraPosition.Builder(current)
+                        .target(userLatLng)
+                        .zoom(initialZoom)
+                        .tilt(fixedTilt)
+                        .build()
+                    // move immediato per essere “snap”
+                    cameraPositionState.move(CameraUpdateFactory.newCameraPosition(updated))
+                }
+            },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp)
+        ) {
+            Icon(Icons.Filled.LocationOn, contentDescription = "Follow")
+        }
     }
 
-    // Centro camera una volta sola (dopo mapLoaded)
+    // =========================
+    // Primo center (una sola volta)
+    // =========================
     LaunchedEffect(mapLoaded, pendingCenter) {
         val target = pendingCenter ?: return@LaunchedEffect
         if (!mapLoaded || didCenterOnce) return@LaunchedEffect
@@ -212,9 +293,12 @@ fun MapScreenWithLocation(
         pendingCenter = null
     }
 
-    // Clamp: attivo solo dopo il primo center
-    LaunchedEffect(cameraPositionState.isMoving, userLatLng, didCenterOnce) {
+    // =========================
+    // Clamp: attivo solo dopo il primo center e solo se follow è OFF
+    // =========================
+    LaunchedEffect(cameraPositionState.isMoving, userLatLng, didCenterOnce, followOn) {
         if (!didCenterOnce) return@LaunchedEffect
+        if (followOn) return@LaunchedEffect
         if (cameraPositionState.isMoving) return@LaunchedEffect
 
         val center = userLatLng
@@ -275,7 +359,7 @@ private fun asinSafe(v: Double): Double =
     kotlin.math.asin(v.coerceIn(-1.0, 1.0))
 
 // -------------------------
-// Fused helpers (2.2)
+// Fused helpers (one-shot)
 // -------------------------
 
 @SuppressLint("MissingPermission")
@@ -297,4 +381,37 @@ private suspend fun com.google.android.gms.location.FusedLocationProviderClient.
     getCurrentLocation(priority, null)
         .addOnSuccessListener { cont.resume(it) }
         .addOnFailureListener { cont.resume(null) }
+}
+
+// -------------------------
+// Fused helpers (real-time flow)
+// -------------------------
+
+@SuppressLint("MissingPermission")
+private fun com.google.android.gms.location.FusedLocationProviderClient.locationUpdatesFlow(
+    hasFine: Boolean,
+    intervalMs: Long
+) = callbackFlow<Location> {
+
+    val priority =
+        if (hasFine) Priority.PRIORITY_HIGH_ACCURACY
+        else Priority.PRIORITY_BALANCED_POWER_ACCURACY
+
+    val request = LocationRequest.Builder(priority, intervalMs)
+        .setMinUpdateIntervalMillis(intervalMs)
+        .setWaitForAccurateLocation(false)
+        .build()
+
+    val callback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+            val loc = result.lastLocation ?: return
+            trySend(loc).isSuccess
+        }
+    }
+
+    requestLocationUpdates(request, callback, Looper.getMainLooper())
+
+    awaitClose {
+        removeLocationUpdates(callback)
+    }
 }
