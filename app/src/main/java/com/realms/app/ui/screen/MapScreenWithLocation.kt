@@ -28,6 +28,9 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.*
 import com.realms.app.data.weather.WeatherNetwork
 import com.realms.app.data.weather.WeatherUiModel
+import com.google.firebase.auth.FirebaseAuth
+import com.realms.app.data.realms.RealmsNetwork
+import com.realms.app.data.realms.NearbyUserDto
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.callbackFlow
@@ -53,10 +56,19 @@ fun MapScreenWithLocation(
                 PackageManager.PERMISSION_GRANTED
     val hasLocationPermission = hasFine || hasCoarse
 
-    // Stato posizione e meteo: parte da Roma
+    // Stato posizione e meteo e REALMS: parte da Roma
     var userLatLng by remember { mutableStateOf(LatLng(41.9028, 12.4964)) }
     var weather by remember { mutableStateOf<WeatherUiModel?>(null) }
     var weatherError by remember { mutableStateOf<String?>(null) }
+    val userId = remember {
+        FirebaseAuth.getInstance().currentUser?.uid ?: "test1" // per ora fallback
+    }
+
+    var backendOnline by remember { mutableStateOf(true) }
+    var backendError by remember { mutableStateOf<String?>(null) }
+
+    var nearbyUsers by remember { mutableStateOf<List<NearbyUserDto>>(emptyList()) }
+
 
     // FOLLOW state
     var followOn by remember { mutableStateOf(true) }
@@ -189,6 +201,49 @@ fun MapScreenWithLocation(
             delay(15_000)
         }
     }
+
+    // =========================
+    // REST
+    // =========================
+    LaunchedEffect(hasLocationPermission, userId) {
+        if (!hasLocationPermission) return@LaunchedEffect
+
+        while (true) {
+            val lat = userLatLng.latitude
+            val lon = userLatLng.longitude
+
+            // STEP 2: POST /locations/update
+            val upd = RealmsNetwork.repository.updateLocation(
+                userId = userId,
+                latitude = lat,
+                longitude = lon
+            )
+
+            // STEP 3: GET /users/nearby
+            val near = RealmsNetwork.repository.getNearbyUsers(
+                userId = userId,
+                latitude = lat,
+                longitude = lon,
+                radiusMeters = 500
+            )
+
+            val ok = upd.isSuccess && near.isSuccess
+            backendOnline = ok
+            backendError = when {
+                ok -> null
+                upd.isFailure -> upd.exceptionOrNull()?.message
+                else -> near.exceptionOrNull()?.message
+            }
+
+            if (near.isSuccess) {
+                nearbyUsers = near.getOrDefault(emptyList())
+                    .filter { it.userId != userId } // escludi te stesso in UI
+            }
+
+            delay(15_000)
+        }
+    }
+
 
     // =========================
     // UI
