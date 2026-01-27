@@ -12,7 +12,7 @@ class AuthInterceptor : Interceptor {
 
         val user = FirebaseAuth.getInstance().currentUser
         if (user != null) {
-            val token = user.getIdToken(false).await().token
+            val token = user.getIdToken(true).await().token
             if (!token.isNullOrBlank()) {
                 builder.addHeader("Authorization", "Bearer $token")
             }

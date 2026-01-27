@@ -10,34 +10,36 @@ import java.util.concurrent.TimeUnit
 
 object RealmsNetwork {
 
-    // IMPORTANTE: Retrofit richiede lo slash finale oppure una baseUrl "directory"
     private const val BASE_URL = "https://realms-api-612950264784.europe-west8.run.app/"
 
     private val moshi: Moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
         .build()
 
-    private val okHttpClient: OkHttpClient = run {
+    private val okHttpClient: OkHttpClient by lazy {
         val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BASIC
+            // 🔥 serve per vedere se l'Authorization header parte davvero
+            level = HttpLoggingInterceptor.Level.HEADERS
         }
 
         OkHttpClient.Builder()
-            .addInterceptor(AuthInterceptor())   // 🔑 aggiunge Authorization: Bearer <FirebaseToken>
-            .addInterceptor(logging)            // log base (non mostra il token)
+            .addInterceptor(AuthInterceptor())   // 🔑 aggiunge Authorization
+            .addInterceptor(logging)             // 🔍 log headers
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .writeTimeout(10, TimeUnit.SECONDS)
             .build()
     }
 
-    private val retrofit: Retrofit = Retrofit.Builder()
-        .baseUrl(BASE_URL)
-        .client(okHttpClient)
-        .addConverterFactory(MoshiConverterFactory.create(moshi))
-        .build()
+    private val retrofit: Retrofit by lazy {
+        Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+    }
 
-    private val api: RealmsApi = retrofit.create(RealmsApi::class.java)
+    private val api: RealmsApi by lazy { retrofit.create(RealmsApi::class.java) }
 
-    val repository: RealmsRepository = RealmsRepository(api)
+    val repository: RealmsRepository by lazy { RealmsRepository(api) }
 }
