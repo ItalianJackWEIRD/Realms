@@ -6,8 +6,11 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Looper
 import android.util.Log
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -26,11 +29,10 @@ import com.google.android.gms.maps.GoogleMapOptions
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.*
+import com.realms.app.data.realms.NearbyUserDto
+import com.realms.app.data.realms.RealmsNetwork
 import com.realms.app.data.weather.WeatherNetwork
 import com.realms.app.data.weather.WeatherUiModel
-import com.google.firebase.auth.FirebaseAuth
-import com.realms.app.data.realms.RealmsNetwork
-import com.realms.app.data.realms.NearbyUserDto
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.callbackFlow
@@ -47,7 +49,7 @@ fun MapScreenWithLocation(
 ) {
     val context = LocalContext.current
 
-    // Permessi (ricalcolati ad ogni recomposition)
+    // Permessi
     val hasFine =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED
@@ -56,19 +58,18 @@ fun MapScreenWithLocation(
                 PackageManager.PERMISSION_GRANTED
     val hasLocationPermission = hasFine || hasCoarse
 
-    // Stato posizione e meteo e REALMS: parte da Roma
+    // Stato posizione e meteo: parte da Roma
     var userLatLng by remember { mutableStateOf(LatLng(41.9028, 12.4964)) }
     var weather by remember { mutableStateOf<WeatherUiModel?>(null) }
     var weatherError by remember { mutableStateOf<String?>(null) }
-    val userId = remember {
-        FirebaseAuth.getInstance().currentUser?.uid ?: "test1" // per ora fallback
-    }
 
-    var backendOnline by remember { mutableStateOf(true) }
-    var backendError by remember { mutableStateOf<String?>(null) }
-
+    // Stato backend Realms
+    var backendStatus by remember { mutableStateOf<String?>(null) }
     var nearbyUsers by remember { mutableStateOf<List<NearbyUserDto>>(emptyList()) }
 
+    // Popup debug su click marker
+    var selectedUser by remember { mutableStateOf<NearbyUserDto?>(null) }
+    var showUserPopup by remember { mutableStateOf(false) }
 
     // FOLLOW state
     var followOn by remember { mutableStateOf(true) }
@@ -121,7 +122,6 @@ fun MapScreenWithLocation(
     // =========================
     // 1) LOCATION UPDATES (real-time)
     // =========================
-    // Frequenza aggiornamento posizione (modifica qui se vuoi)
     val locationIntervalMs = 5_000L
 
     LaunchedEffect(hasLocationPermission, hasFine) {
@@ -129,7 +129,6 @@ fun MapScreenWithLocation(
 
         val fused = LocationServices.getFusedLocationProviderClient(context)
 
-        // Prima: prendi subito una posizione (per non aspettare il primo update)
         val last = fused.awaitLastLocationSafe()
         val first = last ?: fused.awaitCurrentLocationSafe(hasFine)
         if (first != null) {
@@ -138,7 +137,6 @@ fun MapScreenWithLocation(
             pendingCenter = newPos
         }
 
-        // Poi: flusso continuo
         fused.locationUpdatesFlow(
             hasFine = hasFine,
             intervalMs = locationIntervalMs
@@ -150,16 +148,12 @@ fun MapScreenWithLocation(
     // =========================
     // 2) FOLLOW LOGIC
     // =========================
-
-    // Se l'utente muove la mappa con gesture -> follow OFF
     LaunchedEffect(cameraPositionState.cameraMoveStartedReason) {
         if (cameraPositionState.cameraMoveStartedReason == CameraMoveStartedReason.GESTURE) {
             followOn = false
         }
     }
 
-    // Quando follow è ON: ad ogni update di userLatLng, anima la camera verso l'utente
-    // (solo dopo che la mappa è pronta e dopo il primo center)
     LaunchedEffect(followOn, userLatLng, mapLoaded, didCenterOnce) {
         if (!followOn) return@LaunchedEffect
         if (!mapLoaded) return@LaunchedEffect
@@ -203,47 +197,50 @@ fun MapScreenWithLocation(
     }
 
     // =========================
-    // REST
+    // 4) REALMS BACKEND (ogni 15s): update + nearby
+    //    - nuovo backend: identity dal Bearer token
+    //    - Android NON passa userId
     // =========================
-    LaunchedEffect(hasLocationPermission, userId) {
-        if (!hasLocationPermission) return@LaunchedEffect
-
+    LaunchedEffect(Unit) {
         while (true) {
             val lat = userLatLng.latitude
             val lon = userLatLng.longitude
 
-            // STEP 2: POST /locations/update
+            // 1) Update posizione (last-location)
             val upd = RealmsNetwork.repository.updateLocation(
-                userId = userId,
                 latitude = lat,
                 longitude = lon
             )
 
-            // STEP 3: GET /users/nearby
+            if (upd.isFailure) {
+                val msg = upd.exceptionOrNull()?.message ?: "unknown"
+                backendStatus = "backend error: $msg"
+                Log.e("Realms", "updateLocation failed", upd.exceptionOrNull())
+                delay(15_000)
+                continue
+            }
+
+            // 2) Nearby (nel nuovo backend può essere vuoto finché non hai amici)
             val near = RealmsNetwork.repository.getNearbyUsers(
-                userId = userId,
                 latitude = lat,
                 longitude = lon,
                 radiusMeters = 500
             )
 
-            val ok = upd.isSuccess && near.isSuccess
-            backendOnline = ok
-            backendError = when {
-                ok -> null
-                upd.isFailure -> upd.exceptionOrNull()?.message
-                else -> near.exceptionOrNull()?.message
-            }
-
-            if (near.isSuccess) {
-                nearbyUsers = near.getOrDefault(emptyList())
-                    .filter { it.userId != userId } // escludi te stesso in UI
-            }
+            near
+                .onSuccess { list ->
+                    nearbyUsers = list
+                    backendStatus = "backend ok (${list.size})"
+                }
+                .onFailure { e ->
+                    backendStatus = "backend offline (nearby)"
+                    nearbyUsers = emptyList()
+                    Log.e("Realms", "getNearbyUsers failed", e)
+                }
 
             delay(15_000)
         }
     }
-
 
     // =========================
     // UI
@@ -268,13 +265,28 @@ fun MapScreenWithLocation(
                 fillColor = androidx.compose.ui.graphics.Color(0x55FDF6EC)
             )
 
+            // Tu
             Marker(
                 state = myMarkerState,
                 title = "Tu"
             )
+
+            // Utenti vicini (per ora spesso vuoto: solo amici)
+            nearbyUsers.forEach { u ->
+                val pos = LatLng(u.latitude, u.longitude)
+                Marker(
+                    state = MarkerState(position = pos),
+                    title = u.userId,
+                    onClick = {
+                        selectedUser = u
+                        showUserPopup = true
+                        true
+                    }
+                )
+            }
         }
 
-        // ✅ Logout overlay (top-right)
+        // Logout (top-right)
         Button(
             onClick = onLogout,
             modifier = Modifier
@@ -284,7 +296,7 @@ fun MapScreenWithLocation(
             Text("Logout")
         }
 
-        // ✅ Weather overlay (top-left)
+        // Weather overlay (top-left)
         Surface(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -304,11 +316,24 @@ fun MapScreenWithLocation(
             )
         }
 
-        // ✅ Follow button (bottom-right)
+        // Backend overlay (sotto al meteo)
+        Surface(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 12.dp, top = 56.dp),
+            tonalElevation = 6.dp,
+            shape = MaterialTheme.shapes.medium
+        ) {
+            Text(
+                text = backendStatus ?: "backend: ...",
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+            )
+        }
+
+        // Follow (bottom-right)
         FloatingActionButton(
             onClick = {
                 followOn = true
-                // forza anche un "center" immediato, così non aspetti l'animazione next update
                 if (mapLoaded) {
                     val current = cameraPositionState.position
                     val updated = CameraPosition.Builder(current)
@@ -316,7 +341,6 @@ fun MapScreenWithLocation(
                         .zoom(initialZoom)
                         .tilt(fixedTilt)
                         .build()
-                    // move immediato per essere “snap”
                     cameraPositionState.move(CameraUpdateFactory.newCameraPosition(updated))
                 }
             },
@@ -325,6 +349,48 @@ fun MapScreenWithLocation(
                 .padding(16.dp)
         ) {
             Icon(Icons.Filled.LocationOn, contentDescription = "Follow")
+        }
+
+        // Popup debug al centro con X
+        if (showUserPopup && selectedUser != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(androidx.compose.ui.graphics.Color(0x66000000))
+                    .clickable { },
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth(0.85f)
+                        .wrapContentHeight()
+                ) {
+                    Box(modifier = Modifier.padding(16.dp)) {
+
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Close",
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .clickable {
+                                    showUserPopup = false
+                                    selectedUser = null
+                                }
+                        )
+
+                        Column(
+                            modifier = Modifier.padding(top = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("DEBUG USER", style = MaterialTheme.typography.titleMedium)
+                            Text("userId: ${selectedUser!!.userId}")
+                            Text("lat: ${selectedUser!!.latitude}")
+                            Text("lon: ${selectedUser!!.longitude}")
+                            Text("updatedAtUtc: ${selectedUser!!.updatedAtUtc}")
+                        }
+                    }
+                }
+            }
         }
     }
 

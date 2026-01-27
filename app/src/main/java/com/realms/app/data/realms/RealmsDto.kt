@@ -1,8 +1,10 @@
 package com.realms.app.data.realms
 
+import com.squareup.moshi.Json
+
 data class UpdateLocationRequest(
-    val latitude: Double,
-    val longitude: Double
+    @Json(name = "Latitude") val latitude: Double,
+    @Json(name = "Longitude") val longitude: Double
 )
 
 data class NearbyUserDto(
@@ -11,3 +13,12 @@ data class NearbyUserDto(
     val longitude: Double,
     val updatedAtUtc: String? = null
 )
+
+data class CreateMeRequest(
+    val username: String,
+    val firstName: String,
+    val lastName: String,
+    val bio: String? = null,
+    val profilePictureUrl: String? = null
+)
+

@@ -10,7 +10,8 @@ import java.util.concurrent.TimeUnit
 
 object RealmsNetwork {
 
-    private const val BASE_URL = "https://realms-api-612950264784.europe-west8.run.app"
+    // IMPORTANTE: Retrofit richiede lo slash finale oppure una baseUrl "directory"
+    private const val BASE_URL = "https://realms-api-612950264784.europe-west8.run.app/"
 
     private val moshi: Moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
@@ -22,7 +23,8 @@ object RealmsNetwork {
         }
 
         OkHttpClient.Builder()
-            .addInterceptor(logging)
+            .addInterceptor(AuthInterceptor())   // 🔑 aggiunge Authorization: Bearer <FirebaseToken>
+            .addInterceptor(logging)            // log base (non mostra il token)
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .writeTimeout(10, TimeUnit.SECONDS)

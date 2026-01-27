@@ -1,9 +1,7 @@
 package com.realms.app.data.realms
 
-import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
-import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Query
 
@@ -11,15 +9,20 @@ interface RealmsApi {
 
     @POST("locations/update")
     suspend fun updateLocation(
-        @Header("X-User-Id") userId: String,
         @Body body: UpdateLocationRequest
-    ): Response<Unit>
+    ): retrofit2.Response<Unit>
 
     @GET("users/nearby")
     suspend fun getNearbyUsers(
-        @Header("X-User-Id") userId: String,
         @Query("lat") lat: Double,
         @Query("lon") lon: Double,
         @Query("radiusMeters") radiusMeters: Int
-    ): Response<List<NearbyUserDto>>
+    ): retrofit2.Response<List<NearbyUserDto>>
+
+    @POST("users/me")
+    suspend fun createMe(
+        @Body req: CreateMeRequest
+    ): retrofit2.Response<Unit>
+
 }
+

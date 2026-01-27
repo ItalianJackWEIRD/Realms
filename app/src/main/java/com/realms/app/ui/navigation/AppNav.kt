@@ -1,11 +1,15 @@
 package com.realms.app.ui.navigation
 
 import androidx.compose.runtime.*
-import androidx.navigation.compose.*
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import com.google.firebase.auth.FirebaseAuth
 import com.realms.app.auth.AuthUiState
+import com.realms.app.data.realms.RealmsNetwork
 import com.realms.app.ui.screen.LoginScreen
 import com.realms.app.ui.screen.MapScreen
+import kotlinx.coroutines.launch
 
 private object Routes {
     const val LOGIN = "login"
@@ -16,6 +20,7 @@ private object Routes {
 fun AppNav() {
     val navController = rememberNavController()
     val auth = remember { FirebaseAuth.getInstance() }
+    val scope = rememberCoroutineScope()
 
     var uiState by remember {
         mutableStateOf(
@@ -27,7 +32,6 @@ fun AppNav() {
         )
     }
 
-    // Listener: aggiorna user su login/logout
     DisposableEffect(Unit) {
         val listener = FirebaseAuth.AuthStateListener { fa ->
             uiState = uiState.copy(
@@ -67,10 +71,32 @@ fun AppNav() {
                             )
                         }
                 },
-                onSignUp = { email, password ->
+                onSignUp = { email, password, username, firstName, lastName, bio, profilePictureUrl ->
                     uiState = uiState.copy(isLoading = true, errorMessage = null)
 
                     auth.createUserWithEmailAndPassword(email, password)
+                        .addOnSuccessListener {
+                            scope.launch {
+                                val res = RealmsNetwork.repository.createMe(
+                                    username = username,
+                                    firstName = firstName,
+                                    lastName = lastName,
+                                    bio = bio?.takeIf { it.isNotBlank() },
+                                    profilePictureUrl = profilePictureUrl?.takeIf { it.isNotBlank() }
+                                )
+
+                                if (res.isFailure) {
+                                    auth.signOut()
+                                    uiState = uiState.copy(
+                                        isLoading = false,
+                                        errorMessage = res.exceptionOrNull()?.message
+                                            ?: "Errore backend (createMe)"
+                                    )
+                                } else {
+                                    uiState = uiState.copy(isLoading = false, errorMessage = null)
+                                }
+                            }
+                        }
                         .addOnFailureListener { e ->
                             uiState = uiState.copy(
                                 isLoading = false,
