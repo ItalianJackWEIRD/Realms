@@ -14,7 +14,7 @@ class AuthInterceptor : Interceptor {
         if (user != null) {
             val token = user.getIdToken(true).await().token
             if (!token.isNullOrBlank()) {
-                builder.addHeader("Authorization", "Bearer $token")
+                builder.header("Authorization", "Bearer $token")
             }
         }
 
