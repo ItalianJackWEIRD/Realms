@@ -4,6 +4,8 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Query
+import retrofit2.http.Headers
+
 
 interface RealmsApi {
 
@@ -23,6 +25,12 @@ interface RealmsApi {
     suspend fun createMe(
         @Body req: CreateMeRequest
     ): retrofit2.Response<Unit>
+
+    @GET("users/me")
+    suspend fun getMe(): retrofit2.Response<MeDto>
+
+    @GET("friends")
+    suspend fun getFriends(): retrofit2.Response<List<FriendDto>>
 
 }
 

@@ -51,4 +51,18 @@ class RealmsRepository(
         throw RuntimeException("createMe HTTP ${res.code()}")
     }
 
+
+    suspend fun getMe(): Result<MeDto> = runCatching {
+        val res = api.getMe()
+        if (!res.isSuccessful) error("getMe failed: ${res.code()}")
+        res.body() ?: error("getMe empty body")
+    }
+
+    suspend fun getFriends(): Result<List<FriendDto>> = runCatching {
+        val res = api.getFriends()
+        if (!res.isSuccessful) error("getFriends failed: ${res.code()}")
+        res.body() ?: emptyList()
+    }
+
+
 }

@@ -29,6 +29,9 @@ import com.google.android.gms.maps.GoogleMapOptions
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.*
+import com.realms.app.ui.profile.BasicProfileUi
+import com.realms.app.ui.profile.ProfileBottomSheetBasic
+import com.google.firebase.auth.FirebaseAuth
 import com.realms.app.data.realms.NearbyUserDto
 import com.realms.app.data.realms.RealmsNetwork
 import com.realms.app.data.weather.WeatherNetwork
@@ -243,156 +246,195 @@ fun MapScreenWithLocation(
     }
 
     // =========================
-    // UI
-    // =========================
-    Box(modifier = Modifier.fillMaxSize()) {
-
-        GoogleMap(
-            modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState,
-            uiSettings = uiSettings,
-            properties = properties,
-            googleMapOptionsFactory = {
-                GoogleMapOptions().mapId("62f2fd91384b16b631ee0872")
-            },
-            onMapLoaded = { mapLoaded = true }
-        ) {
-            Circle(
-                center = userLatLng,
-                radius = radiusMeters,
-                strokeWidth = 7f,
-                strokeColor = androidx.compose.ui.graphics.Color(0xFF1B1B1B),
-                fillColor = androidx.compose.ui.graphics.Color(0x55FDF6EC)
+// UI + Profile bottom sheet (STEP 1)
+// =========================
+    var profile by remember {
+        mutableStateOf(
+            BasicProfileUi(
+                username = "loading",
+                firstName = "",
+                lastName = "",
+                bio = null
             )
+        )
+    }
 
-            // Tu
-            Marker(
-                state = myMarkerState,
-                title = "Tu"
-            )
+    var friendsCount by remember { mutableStateOf(0) }
 
-            // Utenti vicini (per ora spesso vuoto: solo amici)
-            nearbyUsers.forEach { u ->
-                val pos = LatLng(u.latitude, u.longitude)
-                Marker(
-                    state = MarkerState(position = pos),
-                    title = u.userId,
-                    onClick = {
-                        selectedUser = u
-                        showUserPopup = true
-                        true
-                    }
+    LaunchedEffect(Unit) {
+        // 1) profilo dal DB
+        RealmsNetwork.repository.getMe()
+            .onSuccess { me ->
+                profile = BasicProfileUi(
+                    username = me.username,
+                    firstName = me.firstName,
+                    lastName = me.lastName,
+                    bio = me.bio
                 )
             }
-        }
 
-        // Logout (top-right)
-        Button(
-            onClick = onLogout,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(12.dp)
-        ) {
-            Text("Logout")
-        }
-
-        // Weather overlay (top-left)
-        Surface(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(12.dp),
-            tonalElevation = 6.dp,
-            shape = MaterialTheme.shapes.medium
-        ) {
-            val text = when {
-                weatherError != null -> "Meteo: offline"
-                weather != null -> "${weather!!.temperatureC}°C · ${weather!!.label}"
-                else -> "Meteo: loading..."
+        // 2) count amici (non esiste in DB -> lo calcoliamo)
+        RealmsNetwork.repository.getFriends()
+            .onSuccess { list ->
+                friendsCount = list.size
             }
+    }
 
-            Text(
-                text = text,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-            )
-        }
+    ProfileBottomSheetBasic(
+        profile = profile,
+        friendsCount = friendsCount,
+        contentBehind = {
+            Box(modifier = Modifier.fillMaxSize()) {
 
-        // Backend overlay (sotto al meteo)
-        Surface(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = 12.dp, top = 56.dp),
-            tonalElevation = 6.dp,
-            shape = MaterialTheme.shapes.medium
-        ) {
-            Text(
-                text = backendStatus ?: "backend: ...",
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-            )
-        }
-
-        // Follow (bottom-right)
-        FloatingActionButton(
-            onClick = {
-                followOn = true
-                if (mapLoaded) {
-                    val current = cameraPositionState.position
-                    val updated = CameraPosition.Builder(current)
-                        .target(userLatLng)
-                        .zoom(initialZoom)
-                        .tilt(fixedTilt)
-                        .build()
-                    cameraPositionState.move(CameraUpdateFactory.newCameraPosition(updated))
-                }
-            },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(16.dp)
-        ) {
-            Icon(Icons.Filled.LocationOn, contentDescription = "Follow")
-        }
-
-        // Popup debug al centro con X
-        if (showUserPopup && selectedUser != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(androidx.compose.ui.graphics.Color(0x66000000))
-                    .clickable { },
-                contentAlignment = Alignment.Center
-            ) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth(0.85f)
-                        .wrapContentHeight()
+                GoogleMap(
+                    modifier = Modifier.fillMaxSize(),
+                    cameraPositionState = cameraPositionState,
+                    uiSettings = uiSettings,
+                    properties = properties,
+                    googleMapOptionsFactory = {
+                        GoogleMapOptions().mapId("62f2fd91384b16b631ee0872")
+                    },
+                    onMapLoaded = { mapLoaded = true }
                 ) {
-                    Box(modifier = Modifier.padding(16.dp)) {
+                    Circle(
+                        center = userLatLng,
+                        radius = radiusMeters,
+                        strokeWidth = 7f,
+                        strokeColor = androidx.compose.ui.graphics.Color(0xFF1B1B1B),
+                        fillColor = androidx.compose.ui.graphics.Color(0x55FDF6EC)
+                    )
 
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = "Close",
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .clickable {
-                                    showUserPopup = false
-                                    selectedUser = null
-                                }
+                    // Tu
+                    Marker(
+                        state = myMarkerState,
+                        title = "Tu"
+                    )
+
+                    // Utenti vicini (per ora spesso vuoto: solo amici)
+                    nearbyUsers.forEach { u ->
+                        val pos = LatLng(u.latitude, u.longitude)
+                        Marker(
+                            state = MarkerState(position = pos),
+                            title = u.userId,
+                            onClick = {
+                                selectedUser = u
+                                showUserPopup = true
+                                true
+                            }
                         )
+                    }
+                }
 
-                        Column(
-                            modifier = Modifier.padding(top = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                // Logout (top-right)
+                Button(
+                    onClick = onLogout,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp)
+                ) {
+                    Text("Logout")
+                }
+
+                // Weather overlay (top-left)
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(12.dp),
+                    tonalElevation = 6.dp,
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    val text = when {
+                        weatherError != null -> "Meteo: offline"
+                        weather != null -> "${weather!!.temperatureC}°C · ${weather!!.label}"
+                        else -> "Meteo: loading..."
+                    }
+
+                    Text(
+                        text = text,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+
+                // Backend overlay (sotto al meteo)
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(start = 12.dp, top = 56.dp),
+                    tonalElevation = 6.dp,
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text(
+                        text = backendStatus ?: "backend: ...",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+
+                // Follow (bottom-right)
+                FloatingActionButton(
+                    onClick = {
+                        followOn = true
+                        if (mapLoaded) {
+                            val current = cameraPositionState.position
+                            val updated = CameraPosition.Builder(current)
+                                .target(userLatLng)
+                                .zoom(initialZoom)
+                                .tilt(fixedTilt)
+                                .build()
+                            cameraPositionState.move(CameraUpdateFactory.newCameraPosition(updated))
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 175.dp)
+                ) {
+                    Icon(Icons.Filled.LocationOn, contentDescription = "Follow")
+                }
+
+                // Popup debug al centro con X
+                if (showUserPopup && selectedUser != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color(0x66000000))
+                            .clickable { },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth(0.85f)
+                                .wrapContentHeight()
                         ) {
-                            Text("DEBUG USER", style = MaterialTheme.typography.titleMedium)
-                            Text("userId: ${selectedUser!!.userId}")
-                            Text("lat: ${selectedUser!!.latitude}")
-                            Text("lon: ${selectedUser!!.longitude}")
-                            Text("updatedAtUtc: ${selectedUser!!.updatedAtUtc}")
+                            Box(modifier = Modifier.padding(16.dp)) {
+
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Close",
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .clickable {
+                                            showUserPopup = false
+                                            selectedUser = null
+                                        }
+                                )
+
+                                Column(
+                                    modifier = Modifier.padding(top = 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text("DEBUG USER", style = MaterialTheme.typography.titleMedium)
+                                    Text("userId: ${selectedUser!!.userId}")
+                                    Text("lat: ${selectedUser!!.latitude}")
+                                    Text("lon: ${selectedUser!!.longitude}")
+                                    Text("updatedAtUtc: ${selectedUser!!.updatedAtUtc}")
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-    }
+    )
+
 
     // =========================
     // Primo center (una sola volta)
