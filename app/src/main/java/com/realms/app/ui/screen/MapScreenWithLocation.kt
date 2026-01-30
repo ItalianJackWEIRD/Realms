@@ -29,28 +29,47 @@ import com.google.android.gms.maps.GoogleMapOptions
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.*
-import com.realms.app.ui.profile.BasicProfileUi
-import com.realms.app.ui.profile.ProfileBottomSheetBasic
-import com.google.firebase.auth.FirebaseAuth
+import com.realms.app.data.realms.FriendDto
+import com.realms.app.data.realms.FriendRequestDto
 import com.realms.app.data.realms.NearbyUserDto
 import com.realms.app.data.realms.RealmsNetwork
+import com.realms.app.data.realms.SearchUserDto
 import com.realms.app.data.weather.WeatherNetwork
 import com.realms.app.data.weather.WeatherUiModel
+import com.realms.app.ui.profile.BasicProfileUi
+import com.realms.app.ui.profile.ProfileBottomSheetBasic
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
+import androidx.annotation.DrawableRes
+import com.google.android.gms.maps.model.BitmapDescriptor
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.realms.app.R
+import kotlin.math.abs
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.Color
 
 @Composable
 fun MapScreenWithLocation(
     onLogout: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     // Permessi
     val hasFine =
@@ -201,15 +220,12 @@ fun MapScreenWithLocation(
 
     // =========================
     // 4) REALMS BACKEND (ogni 15s): update + nearby
-    //    - nuovo backend: identity dal Bearer token
-    //    - Android NON passa userId
     // =========================
     LaunchedEffect(Unit) {
         while (true) {
             val lat = userLatLng.latitude
             val lon = userLatLng.longitude
 
-            // 1) Update posizione (last-location)
             val upd = RealmsNetwork.repository.updateLocation(
                 latitude = lat,
                 longitude = lon
@@ -223,7 +239,6 @@ fun MapScreenWithLocation(
                 continue
             }
 
-            // 2) Nearby (nel nuovo backend può essere vuoto finché non hai amici)
             val near = RealmsNetwork.repository.getNearbyUsers(
                 latitude = lat,
                 longitude = lon,
@@ -246,8 +261,8 @@ fun MapScreenWithLocation(
     }
 
     // =========================
-// UI + Profile bottom sheet (STEP 1)
-// =========================
+    // 5) PROFILE + FRIENDS + REQUESTS + SEARCH
+    // =========================
     var profile by remember {
         mutableStateOf(
             BasicProfileUi(
@@ -259,10 +274,27 @@ fun MapScreenWithLocation(
         )
     }
 
-    var friendsCount by remember { mutableStateOf(0) }
+    // >>>> TENIAMO LISTA AMICI IN STATE (così count non resta 0)
+    var friends by remember { mutableStateOf<List<FriendDto>>(emptyList()) }
+    val friendsCount = friends.size
 
+    var incomingRequests by remember { mutableStateOf<List<FriendRequestDto>>(emptyList()) }
+
+    // search state
+    var searchResults by remember { mutableStateOf<List<SearchUserDto>>(emptyList()) }
+    var searchJob by remember { mutableStateOf<Job?>(null) }
+    var lastSearchQuery by remember { mutableStateOf("") }
+
+    suspend fun refreshFriendsAndIncoming() {
+        RealmsNetwork.repository.getFriends()
+            .onSuccess { list -> friends = list }
+
+        RealmsNetwork.repository.getIncomingFriendRequests()
+            .onSuccess { list -> incomingRequests = list }
+    }
+
+    // load iniziale: me + friends + incoming
     LaunchedEffect(Unit) {
-        // 1) profilo dal DB
         RealmsNetwork.repository.getMe()
             .onSuccess { me ->
                 profile = BasicProfileUi(
@@ -273,16 +305,79 @@ fun MapScreenWithLocation(
                 )
             }
 
-        // 2) count amici (non esiste in DB -> lo calcoliamo)
-        RealmsNetwork.repository.getFriends()
-            .onSuccess { list ->
-                friendsCount = list.size
-            }
+        refreshFriendsAndIncoming()
+    }
+
+    // polling incoming requests (badge live)
+    LaunchedEffect(Unit) {
+        while (true) {
+            RealmsNetwork.repository.getIncomingFriendRequests()
+                .onSuccess { list -> incomingRequests = list }
+            delay(12_000)
+        }
+    }
+
+    fun handleSearchQuery(q: String) {
+        val trimmed = q.trim()
+        lastSearchQuery = trimmed
+
+        searchJob?.cancel()
+        if (trimmed.isBlank()) {
+            searchResults = emptyList()
+            return
+        }
+
+        searchJob = scope.launch {
+            delay(250) // debounce
+            if (lastSearchQuery != trimmed) return@launch
+
+            RealmsNetwork.repository.searchUsers(trimmed)
+                .onSuccess { list ->
+                    if (lastSearchQuery == trimmed) searchResults = list
+                }
+                .onFailure {
+                    if (lastSearchQuery == trimmed) searchResults = emptyList()
+                }
+        }
     }
 
     ProfileBottomSheetBasic(
         profile = profile,
+        onLoadUserProfile = { userId ->
+            RealmsNetwork.repository.getUserProfile(userId)
+        },
+
         friendsCount = friendsCount,
+        friends = friends,
+
+        incomingRequests = incomingRequests,
+        onOpenSearch = { },
+
+        onSendFriendRequest = { toUserId ->
+            RealmsNetwork.repository.sendFriendRequest(toUserId)
+        },
+
+        onRemoveFriend = { friendUserId ->
+            RealmsNetwork.repository.removeFriend(friendUserId).also {
+                if (it.isSuccess) refreshFriendsAndIncoming()
+            }
+        },
+
+        onAcceptIncoming = { requestId ->
+            RealmsNetwork.repository.acceptFriendRequest(requestId).also {
+                if (it.isSuccess) refreshFriendsAndIncoming()
+            }
+        },
+
+        onRejectIncoming = { requestId ->
+            RealmsNetwork.repository.rejectFriendRequest(requestId).also {
+                if (it.isSuccess) refreshFriendsAndIncoming()
+            }
+        },
+
+        searchResults = searchResults,
+        onSearchQuery = { q -> handleSearchQuery(q) },
+
         contentBehind = {
             Box(modifier = Modifier.fillMaxSize()) {
 
@@ -304,18 +399,23 @@ fun MapScreenWithLocation(
                         fillColor = androidx.compose.ui.graphics.Color(0x55FDF6EC)
                     )
 
-                    // Tu
                     Marker(
                         state = myMarkerState,
                         title = "Tu"
                     )
 
-                    // Utenti vicini (per ora spesso vuoto: solo amici)
                     nearbyUsers.forEach { u ->
                         val pos = LatLng(u.latitude, u.longitude)
+
+                        val tint = remember(u.userId) { pickMarkerColor(u.userId) }
+                        val icon = remember(u.userId, tint) {
+                            bitmapDescriptorFromVector(context, R.drawable.ic_realm_pin, tint)
+                        }
+
                         Marker(
                             state = MarkerState(position = pos),
                             title = u.userId,
+                            icon = icon,
                             onClick = {
                                 selectedUser = u
                                 showUserPopup = true
@@ -325,17 +425,13 @@ fun MapScreenWithLocation(
                     }
                 }
 
-                // Logout (top-right)
                 Button(
                     onClick = onLogout,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(12.dp)
-                ) {
-                    Text("Logout")
-                }
+                ) { Text("Logout") }
 
-                // Weather overlay (top-left)
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -348,14 +444,12 @@ fun MapScreenWithLocation(
                         weather != null -> "${weather!!.temperatureC}°C · ${weather!!.label}"
                         else -> "Meteo: loading..."
                     }
-
                     Text(
                         text = text,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                     )
                 }
 
-                // Backend overlay (sotto al meteo)
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -369,7 +463,6 @@ fun MapScreenWithLocation(
                     )
                 }
 
-                // Follow (bottom-right)
                 FloatingActionButton(
                     onClick = {
                         followOn = true
@@ -390,13 +483,15 @@ fun MapScreenWithLocation(
                     Icon(Icons.Filled.LocationOn, contentDescription = "Follow")
                 }
 
-                // Popup debug al centro con X
                 if (showUserPopup && selectedUser != null) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .background(androidx.compose.ui.graphics.Color(0x66000000))
-                            .clickable { },
+                            .clickable {
+                                showUserPopup = false
+                                selectedUser = null
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Card(
@@ -405,7 +500,6 @@ fun MapScreenWithLocation(
                                 .wrapContentHeight()
                         ) {
                             Box(modifier = Modifier.padding(16.dp)) {
-
                                 Icon(
                                     imageVector = Icons.Filled.Close,
                                     contentDescription = "Close",
@@ -418,14 +512,52 @@ fun MapScreenWithLocation(
                                 )
 
                                 Column(
-                                    modifier = Modifier.padding(top = 12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    modifier = Modifier.padding(top = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(14.dp)
                                 ) {
-                                    Text("DEBUG USER", style = MaterialTheme.typography.titleMedium)
-                                    Text("userId: ${selectedUser!!.userId}")
-                                    Text("lat: ${selectedUser!!.latitude}")
-                                    Text("lon: ${selectedUser!!.longitude}")
-                                    Text("updatedAtUtc: ${selectedUser!!.updatedAtUtc}")
+                                    // HEADER: placeholder avatar + user (per ora userId short)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+
+                                        Box(
+                                            modifier = Modifier
+                                                .size(44.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.Black),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text("👤", color = Color.White)
+                                        }
+
+                                        Spacer(Modifier.width(12.dp))
+
+                                        Text(
+                                            text = "@${selectedUser!!.userId.take(8)}",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+
+                                    // 3 BOTTONI (TODO azioni)
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Button(
+                                            onClick = { /* TODO: go to profile */ },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) { Text("Go to profile") }
+
+                                        OutlinedButton(
+                                            onClick = { /* TODO: directions */ },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) { Text("Directions") }
+
+                                        OutlinedButton(
+                                            onClick = { /* TODO: say hi */ },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) { Text("Say hi!") }
+                                    }
                                 }
                             }
                         }
@@ -435,10 +567,7 @@ fun MapScreenWithLocation(
         }
     )
 
-
-    // =========================
     // Primo center (una sola volta)
-    // =========================
     LaunchedEffect(mapLoaded, pendingCenter) {
         val target = pendingCenter ?: return@LaunchedEffect
         if (!mapLoaded || didCenterOnce) return@LaunchedEffect
@@ -456,9 +585,7 @@ fun MapScreenWithLocation(
         pendingCenter = null
     }
 
-    // =========================
     // Clamp: attivo solo dopo il primo center e solo se follow è OFF
-    // =========================
     LaunchedEffect(cameraPositionState.isMoving, userLatLng, didCenterOnce, followOn) {
         if (!didCenterOnce) return@LaunchedEffect
         if (followOn) return@LaunchedEffect
@@ -485,10 +612,7 @@ fun MapScreenWithLocation(
     }
 }
 
-// -------------------------
 // Helpers (clamp)
-// -------------------------
-
 private fun distanceMeters(a: LatLng, b: LatLng): Float {
     val results = FloatArray(1)
     Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, results)
@@ -509,7 +633,8 @@ private fun clampToCircleEdge(center: LatLng, target: LatLng, radiusMeters: Doub
     val bearing = atan2(y, x)
 
     val angDist = radiusMeters / earthRadius
-    val lat3 = asinSafe(sin(lat1) * cos(angDist) + cos(lat1) * sin(angDist) * cos(bearing))
+    val lat3 =
+        asinSafe(sin(lat1) * cos(angDist) + cos(lat1) * sin(angDist) * cos(bearing))
     val lon3 = lon1 + atan2(
         sin(bearing) * sin(angDist) * cos(lat1),
         cos(angDist) - sin(lat1) * sin(lat3)
@@ -521,10 +646,7 @@ private fun clampToCircleEdge(center: LatLng, target: LatLng, radiusMeters: Doub
 private fun asinSafe(v: Double): Double =
     kotlin.math.asin(v.coerceIn(-1.0, 1.0))
 
-// -------------------------
 // Fused helpers (one-shot)
-// -------------------------
-
 @SuppressLint("MissingPermission")
 private suspend fun com.google.android.gms.location.FusedLocationProviderClient.awaitLastLocationSafe() =
     suspendCancellableCoroutine<Location?> { cont ->
@@ -546,10 +668,7 @@ private suspend fun com.google.android.gms.location.FusedLocationProviderClient.
         .addOnFailureListener { cont.resume(null) }
 }
 
-// -------------------------
 // Fused helpers (real-time flow)
-// -------------------------
-
 @SuppressLint("MissingPermission")
 private fun com.google.android.gms.location.FusedLocationProviderClient.locationUpdatesFlow(
     hasFine: Boolean,
@@ -577,4 +696,43 @@ private fun com.google.android.gms.location.FusedLocationProviderClient.location
     awaitClose {
         removeLocationUpdates(callback)
     }
+}
+
+
+private fun pickMarkerColor(userId: String): Int {
+    // palette tua (modifica liberamente)
+    val palette = listOf(
+        0xFF2EE6C5.toInt(),
+        0xFF7C5CFF.toInt(),
+        0xFFFFC93C.toInt(),
+        0xFFFF5C8A.toInt(),
+        0xFF4DA3FF.toInt(),
+        0xFF6EEB83.toInt(),
+        0xFFFF8F3F.toInt(),
+    )
+    val idx = abs(userId.hashCode()) % palette.size
+    return palette[idx]
+}
+
+private fun bitmapDescriptorFromVector(
+    context: Context,
+    @DrawableRes vectorResId: Int,
+    tintColor: Int,
+    scale: Float = 1.25f // 1.2–1.3 circa
+): BitmapDescriptor {
+    val drawable = androidx.core.content.ContextCompat.getDrawable(context, vectorResId)
+        ?: return BitmapDescriptorFactory.defaultMarker()
+
+    drawable.colorFilter = PorterDuffColorFilter(tintColor, PorterDuff.Mode.SRC_IN)
+
+    val width = (drawable.intrinsicWidth.coerceAtLeast(1) * scale).toInt()
+    val height = (drawable.intrinsicHeight.coerceAtLeast(1) * scale).toInt()
+
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    drawable.setBounds(0, 0, canvas.width, canvas.height)
+    drawable.draw(canvas)
+
+    return BitmapDescriptorFactory.fromBitmap(bitmap)
 }

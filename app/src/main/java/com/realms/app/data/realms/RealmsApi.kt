@@ -1,36 +1,64 @@
 package com.realms.app.data.realms
 
+import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.Path
 import retrofit2.http.Query
-import retrofit2.http.Headers
-
+import retrofit2.http.DELETE
 
 interface RealmsApi {
 
     @POST("locations/update")
     suspend fun updateLocation(
         @Body body: UpdateLocationRequest
-    ): retrofit2.Response<Unit>
+    ): Response<Unit>
 
     @GET("users/nearby")
     suspend fun getNearbyUsers(
         @Query("lat") lat: Double,
         @Query("lon") lon: Double,
         @Query("radiusMeters") radiusMeters: Int
-    ): retrofit2.Response<List<NearbyUserDto>>
+    ): Response<List<NearbyUserDto>>
 
     @POST("users/me")
     suspend fun createMe(
         @Body req: CreateMeRequest
-    ): retrofit2.Response<Unit>
+    ): Response<Unit>
 
+    // ===== PROFILE =====
     @GET("users/me")
-    suspend fun getMe(): retrofit2.Response<MeDto>
+    suspend fun getMe(): Response<MeDto>
 
+    // ===== FRIENDS =====
     @GET("friends")
-    suspend fun getFriends(): retrofit2.Response<List<FriendDto>>
+    suspend fun getFriends(): Response<List<FriendDto>>
+
+    @POST("friends/requests")
+    suspend fun sendFriendRequest(
+        @Body req: SendFriendRequestRequest
+    ): Response<Unit>
+
+    @GET("friends/requests/incoming")
+    suspend fun getIncomingFriendRequests(): Response<List<FriendRequestDto>>
+
+    @POST("friends/requests/{id}/accept")
+    suspend fun acceptFriendRequest(@Path("id") id: Long): Response<Unit>
+
+    @POST("friends/requests/{id}/reject")
+    suspend fun rejectFriendRequest(@Path("id") id: Long): Response<Unit>
+
+    @DELETE("friends/{friendUserId}")
+    suspend fun removeFriend(@Path("friendUserId") friendUserId: String): Response<Unit>
+
+    @GET("users/search")
+    suspend fun searchUsers(
+        @Query("username") username: String,
+        @Query("max") max: Int = 20
+    ): retrofit2.Response<List<SearchUserDto>>
+
+    @GET("users/{id}/profile")
+    suspend fun getUserProfile(@Path("id") id: String): Response<UserProfileDto>
 
 }
-
