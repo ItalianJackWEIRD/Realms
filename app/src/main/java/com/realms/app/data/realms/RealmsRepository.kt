@@ -47,6 +47,32 @@ class RealmsRepository(
         throw RuntimeException("createMe HTTP ${res.code()}")
     }
 
+    suspend fun updateMe(
+        username: String,
+        firstName: String,
+        lastName: String,
+        bio: String? = null,
+        profilePhotoUrl: String? = null
+    ): Result<Unit> = runCatching {
+        val res = api.updateMe(
+            UpdateMeRequest(
+                username = username,
+                firstName = firstName,
+                lastName = lastName,
+                bio = bio,
+                profilePhotoUrl = profilePhotoUrl
+            )
+        )
+
+        if (res.isSuccessful) return@runCatching Unit
+
+        // backend: Conflict("username already taken")
+        if (res.code() == 409) throw RuntimeException("username already taken")
+
+        throw RuntimeException("updateMe HTTP ${res.code()}")
+    }
+
+
     // ===== ME =====
     suspend fun getMe(): Result<MeDto> = runCatching {
         val res = api.getMe()

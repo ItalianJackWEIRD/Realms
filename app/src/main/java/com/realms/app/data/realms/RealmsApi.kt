@@ -7,6 +7,7 @@ import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.http.DELETE
+import retrofit2.http.PUT
 
 interface RealmsApi {
 
@@ -30,6 +31,11 @@ interface RealmsApi {
     // ===== PROFILE =====
     @GET("users/me")
     suspend fun getMe(): Response<MeDto>
+
+    @PUT("users/me")
+    suspend fun updateMe(
+        @Body req: UpdateMeRequest
+    ): Response<Unit>
 
     // ===== FRIENDS =====
     @GET("friends")

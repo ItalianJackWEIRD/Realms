@@ -70,8 +70,11 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import kotlin.math.atan2
-import kotlin.math.sqrt
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.statusBars
 
 
 @Composable
@@ -113,6 +116,11 @@ fun MapScreenWithLocation(
     // cache profili già fetchati
     val profileCache = remember { androidx.compose.runtime.mutableStateMapOf<String, UserProfileDto>() }
 
+
+    // UI-only navigation: Edit Profile screen
+    var showEditProfile by remember { mutableStateOf(false) }
+    var editProfileLoading by remember { mutableStateOf(false) }
+    var editProfileError by remember { mutableStateOf<String?>(null) }
 
 
     // FOLLOW state
@@ -408,6 +416,51 @@ fun MapScreenWithLocation(
         }
     }
 
+    if (showEditProfile) {
+        EditProfileScreen(
+            initialUsername = profile.username,
+            initialFirstName = profile.firstName,
+            initialLastName = profile.lastName,
+            initialBio = profile.bio,
+            initialProfilePictureUrl = null,
+            onSave = { newUsername, newFirstName, newLastName, newBio, _ ->
+                editProfileError = null
+                editProfileLoading = true
+
+                scope.launch {
+                    val result = RealmsNetwork.repository.updateMe(
+                        username = newUsername,
+                        firstName = newFirstName,
+                        lastName = newLastName,
+                        bio = newBio,
+                        profilePhotoUrl = null // TODO: quando aggiungi foto
+                    )
+
+                    result
+                        .onSuccess {
+                            // Aggiorna UI locale (così vedi subito il cambio)
+                            profile = profile.copy(
+                                username = newUsername,
+                                firstName = newFirstName,
+                                lastName = newLastName,
+                                bio = newBio
+                            )
+                            showEditProfile = false
+                        }
+                        .onFailure { e ->
+                            editProfileError =
+                                if (e.message?.contains("username already taken", ignoreCase = true) == true)
+                                    "Username già preso"
+                                else
+                                    (e.message ?: "Errore aggiornamento profilo")
+                        }
+
+                    editProfileLoading = false
+                }
+            },
+            onCancel = { showEditProfile = false }
+        )
+    } else
     ProfileBottomSheetBasic(
         profile = profile,
         onLoadUserProfile = { userId ->
@@ -447,6 +500,8 @@ fun MapScreenWithLocation(
 
         contentBehind = { openUserProfile ->
             Box(modifier = Modifier.fillMaxSize()) {
+
+
 
                 GoogleMap(
                     modifier = Modifier.fillMaxSize(),
@@ -518,42 +573,86 @@ fun MapScreenWithLocation(
                     }
                 }
 
-                Button(
-                    onClick = onLogout,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(12.dp)
-                ) { Text("Logout") }
+                // =========================
+                // TOP BAR (meteo + settings)
+                // =========================
+                var showSettingsMenu by remember { mutableStateOf(false) }
 
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(12.dp),
-                    tonalElevation = 6.dp,
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    val text = when {
-                        weatherError != null -> "Meteo: offline"
-                        weather != null -> "${weather!!.temperatureC}°C · ${weather!!.label}"
-                        else -> "Meteo: loading..."
-                    }
-                    Text(
-                        text = text,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                    )
+                val tempText = when {
+                    weatherError != null -> "--°"
+                    weather != null -> "${weather!!.temperatureC}°"
+                    else -> "--°"
+                }
+
+                val statusText = when {
+                    weatherError != null -> "Offline"
+                    weather != null -> weather!!.label
+                    else -> "Loading…"
                 }
 
                 Surface(
                     modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(start = 12.dp, top = 56.dp),
-                    tonalElevation = 6.dp,
-                    shape = MaterialTheme.shapes.medium
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(90.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                    tonalElevation = 10.dp,
+                    shadowElevation = 14.dp,
+                    shape = RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp)
                 ) {
-                    Text(
-                        text = backendStatus ?: "backend: ...",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp)
+                            .windowInsetsPadding(WindowInsets.statusBars),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = tempText,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+
+                        Spacer(modifier = Modifier.weight(1.2f))
+
+                        Text(
+                            text = statusText,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        Box {
+                            IconButton(onClick = { showSettingsMenu = true }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Settings,
+                                    contentDescription = "Settings"
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = showSettingsMenu,
+                                onDismissRequest = { showSettingsMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Edit profile") },
+                                    onClick = {
+                                        showSettingsMenu = false
+                                        showEditProfile = true
+                                    }
+                                )
+
+                                DropdownMenuItem(
+                                    text = { Text("Logout") },
+                                    onClick = {
+                                        showSettingsMenu = false
+                                        onLogout()
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
 
                 FloatingActionButton(
