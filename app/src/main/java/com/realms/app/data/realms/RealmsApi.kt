@@ -61,4 +61,8 @@ interface RealmsApi {
     @GET("users/{id}/profile")
     suspend fun getUserProfile(@Path("id") id: String): Response<UserProfileDto>
 
+    @POST("users/usernames")
+    suspend fun getUsernames(@Body req: UsernamesRequest): UsernamesResponse
+
+
 }

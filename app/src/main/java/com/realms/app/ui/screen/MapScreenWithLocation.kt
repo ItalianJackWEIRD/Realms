@@ -32,6 +32,7 @@ import com.google.maps.android.compose.*
 import com.realms.app.data.realms.FriendDto
 import com.realms.app.data.realms.FriendRequestDto
 import com.realms.app.data.realms.NearbyUserDto
+import com.realms.app.data.realms.UserProfileDto
 import com.realms.app.data.realms.RealmsNetwork
 import com.realms.app.data.realms.SearchUserDto
 import com.realms.app.data.weather.WeatherNetwork
@@ -63,6 +64,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlin.math.atan2
+import kotlin.math.sqrt
+
 
 @Composable
 fun MapScreenWithLocation(
@@ -89,12 +99,27 @@ fun MapScreenWithLocation(
     var backendStatus by remember { mutableStateOf<String?>(null) }
     var nearbyUsers by remember { mutableStateOf<List<NearbyUserDto>>(emptyList()) }
 
-    // Popup debug su click marker
+    // =========================
+    // POPUP friend marker + profile fetch cache
+    // =========================
     var selectedUser by remember { mutableStateOf<NearbyUserDto?>(null) }
     var showUserPopup by remember { mutableStateOf(false) }
 
+    // profilo completo caricato via /users/{id}/profile
+    var selectedUserProfile by remember { mutableStateOf<UserProfileDto?>(null) }
+    var profileLoading by remember { mutableStateOf(false) }
+    var profileError by remember { mutableStateOf<String?>(null) }
+
+    // cache profili già fetchati
+    val profileCache = remember { androidx.compose.runtime.mutableStateMapOf<String, UserProfileDto>() }
+
+
+
     // FOLLOW state
     var followOn by remember { mutableStateOf(true) }
+    // Bearing telefono (0..360). Lo usiamo per ruotare la camera quando FOLLOW è attivo.
+    var phoneBearing by remember { mutableStateOf(0f) }
+
 
     // Config mappa
     val initialZoom = 18f
@@ -142,6 +167,47 @@ fun MapScreenWithLocation(
     }
 
     // =========================
+    // ORIENTATION (rotation vector -> azimuth -> bearing)
+    // =========================
+    DisposableEffect(Unit) {
+        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+
+        if (rotationSensor == null) {
+            // Se manca, puoi fallbackare su accelerometer+magnetometer (più verboso).
+            onDispose { }
+        } else {
+            val rotationMatrix = FloatArray(9)
+            val orientation = FloatArray(3)
+
+            val listener = object : SensorEventListener {
+                override fun onSensorChanged(event: SensorEvent) {
+                    // Rotation vector -> rotation matrix -> orientation (azimuth)
+                    SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                    SensorManager.getOrientation(rotationMatrix, orientation)
+
+                    // orientation[0] = azimuth in radianti (-pi..pi)
+                    val azimuthRad = orientation[0]
+                    var azimuthDeg = Math.toDegrees(azimuthRad.toDouble()).toFloat()
+
+                    // Normalizza 0..360
+                    if (azimuthDeg < 0f) azimuthDeg += 360f
+
+                    phoneBearing = azimuthDeg
+                }
+
+                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+            }
+
+            sensorManager.registerListener(listener, rotationSensor, SensorManager.SENSOR_DELAY_UI)
+
+            onDispose {
+                sensorManager.unregisterListener(listener)
+            }
+        }
+    }
+
+    // =========================
     // 1) LOCATION UPDATES (real-time)
     // =========================
     val locationIntervalMs = 5_000L
@@ -176,7 +242,7 @@ fun MapScreenWithLocation(
         }
     }
 
-    LaunchedEffect(followOn, userLatLng, mapLoaded, didCenterOnce) {
+    LaunchedEffect(followOn, userLatLng, phoneBearing, mapLoaded, didCenterOnce) {
         if (!followOn) return@LaunchedEffect
         if (!mapLoaded) return@LaunchedEffect
         if (!didCenterOnce) return@LaunchedEffect
@@ -185,11 +251,12 @@ fun MapScreenWithLocation(
         val updated = CameraPosition.Builder(current)
             .target(userLatLng)
             .tilt(fixedTilt)
+            .bearing(phoneBearing) // <<< QUI
             .build()
 
         cameraPositionState.animate(
             update = CameraUpdateFactory.newCameraPosition(updated),
-            durationMs = 450
+            durationMs = 200 // un po' più reattivo
         )
     }
 
@@ -378,7 +445,7 @@ fun MapScreenWithLocation(
         searchResults = searchResults,
         onSearchQuery = { q -> handleSearchQuery(q) },
 
-        contentBehind = {
+        contentBehind = { openUserProfile ->
             Box(modifier = Modifier.fillMaxSize()) {
 
                 GoogleMap(
@@ -407,6 +474,8 @@ fun MapScreenWithLocation(
                     nearbyUsers.forEach { u ->
                         val pos = LatLng(u.latitude, u.longitude)
 
+                        val haptic = LocalHapticFeedback.current
+
                         val tint = remember(u.userId) { pickMarkerColor(u.userId) }
                         val icon = remember(u.userId, tint) {
                             bitmapDescriptorFromVector(context, R.drawable.ic_realm_pin, tint)
@@ -417,8 +486,32 @@ fun MapScreenWithLocation(
                             title = u.userId,
                             icon = icon,
                             onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress) // vibrazione super light
+
                                 selectedUser = u
                                 showUserPopup = true
+
+                                val uid = u.userId
+                                profileError = null
+
+                                // Se già in cache -> usa subito
+                                val cached = profileCache[uid]
+                                if (cached != null) {
+                                    selectedUserProfile = cached
+                                } else {
+                                    selectedUserProfile = null
+                                    profileLoading = true
+                                    scope.launch {
+                                        val res = RealmsNetwork.repository.getUserProfile(uid)
+                                        res.onSuccess { dto ->
+                                            profileCache[uid] = dto
+                                            selectedUserProfile = dto
+                                        }.onFailure { e ->
+                                            profileError = e.message ?: "getUserProfile failed"
+                                        }
+                                        profileLoading = false
+                                    }
+                                }
                                 true
                             }
                         )
@@ -472,6 +565,7 @@ fun MapScreenWithLocation(
                                 .target(userLatLng)
                                 .zoom(initialZoom)
                                 .tilt(fixedTilt)
+                                .bearing(phoneBearing)
                                 .build()
                             cameraPositionState.move(CameraUpdateFactory.newCameraPosition(updated))
                         }
@@ -491,6 +585,7 @@ fun MapScreenWithLocation(
                             .clickable {
                                 showUserPopup = false
                                 selectedUser = null
+                                // non pulisco cache
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -515,9 +610,8 @@ fun MapScreenWithLocation(
                                     modifier = Modifier.padding(top = 8.dp),
                                     verticalArrangement = Arrangement.spacedBy(14.dp)
                                 ) {
-                                    // HEADER: placeholder avatar + user (per ora userId short)
+                                    // HEADER: placeholder avatar + username
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-
                                         Box(
                                             modifier = Modifier
                                                 .size(44.dp)
@@ -530,11 +624,27 @@ fun MapScreenWithLocation(
 
                                         Spacer(Modifier.width(12.dp))
 
+                                        val uname = selectedUserProfile?.username
+                                        val titleText = when {
+                                            profileLoading -> "Loading..."
+                                            !uname.isNullOrBlank() -> "@$uname"
+                                            else -> "@${selectedUser!!.userId.take(8)}"
+                                        }
+
                                         Text(
-                                            text = "@${selectedUser!!.userId.take(8)}",
+                                            text = titleText,
                                             style = MaterialTheme.typography.titleMedium,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+
+                                    // Error (se c'è)
+                                    if (profileError != null) {
+                                        Text(
+                                            text = profileError!!,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error
                                         )
                                     }
 
@@ -544,19 +654,17 @@ fun MapScreenWithLocation(
                                         verticalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         Button(
-                                            onClick = { /* TODO: go to profile */ },
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) { Text("Go to profile") }
+                                            onClick = {
+                                                val uid = selectedUser!!.userId
+                                                showUserPopup = false
+                                                selectedUser = null
 
-                                        OutlinedButton(
-                                            onClick = { /* TODO: directions */ },
+                                                openUserProfile(uid)
+                                            },
                                             modifier = Modifier.fillMaxWidth()
-                                        ) { Text("Directions") }
-
-                                        OutlinedButton(
-                                            onClick = { /* TODO: say hi */ },
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) { Text("Say hi!") }
+                                        ) {
+                                            Text("Go to profile")
+                                        }
                                     }
                                 }
                             }

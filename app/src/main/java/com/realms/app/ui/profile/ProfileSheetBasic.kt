@@ -34,6 +34,7 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import com.realms.app.data.realms.RealmsNetwork
 
 
 data class BasicProfileUi(
@@ -67,7 +68,7 @@ fun ProfileBottomSheetBasic(
     searchResults: List<SearchUserDto>,
     onSearchQuery: (String) -> Unit,
 
-    contentBehind: @Composable () -> Unit
+    contentBehind: @Composable (openUserProfile: (String) -> Unit) -> Unit
 ) {
     val sheetState = rememberStandardBottomSheetState(
         initialValue = SheetValue.PartiallyExpanded,
@@ -79,6 +80,10 @@ fun ProfileBottomSheetBasic(
     var showIncomingDialog by remember { mutableStateOf(false) }
     var showFriendsDialog by remember { mutableStateOf(false) }
 
+    val scope = rememberCoroutineScope()
+    val usernameById = remember { mutableStateMapOf<String, String>() }
+
+
     // Popup profilo utente esterno (da search o da friends list)
     var showUserProfileDialog by remember { mutableStateOf(false) }
 
@@ -87,6 +92,8 @@ fun ProfileBottomSheetBasic(
     // - o SearchUserDto (se viene dal search e non è amico)
     var selectedFriend by remember { mutableStateOf<FriendDto?>(null) }
     var selectedSearchUser by remember { mutableStateOf<SearchUserDto?>(null) }
+
+    var forcedUserId by remember { mutableStateOf<String?>(null) }
 
     var searchText by remember { mutableStateOf("") }
 
@@ -97,6 +104,14 @@ fun ProfileBottomSheetBasic(
         selectedSearchUser = if (match == null) u else null
         showUserProfileDialog = true
     }
+
+    fun openUserProfileById(userId: String) {
+        // non serve username qui: la dialog chiama onLoadUserProfile(userId) e lo ottiene dal backend
+        selectedFriend = friends.firstOrNull { it.id == userId } // se ce l'hai già tra gli amici ok
+        selectedSearchUser = null // oppure puoi lasciarlo null sempre
+        showUserProfileDialog = true
+    }
+
 
     fun openUserProfileFromFriend(f: FriendDto) {
         selectedFriend = f
@@ -138,14 +153,33 @@ fun ProfileBottomSheetBasic(
                         showSearchDialog = true
                         onOpenSearch()
                     },
-                    onClickIncoming = { showIncomingDialog = true },
+                    onClickIncoming = {
+                        showIncomingDialog = true
+
+                        // prendi gli id unici delle richieste
+                        val idsToFetch = incomingRequests
+                            .map { it.fromUserId }
+                            .distinct()
+                            .filter { it !in usernameById } // evita richieste duplicate se riapri
+
+                        if (idsToFetch.isNotEmpty()) {
+                            scope.launch {
+                                runCatching {
+                                    RealmsNetwork.repository.getUsernameMap(idsToFetch)
+                                }.onSuccess { map ->
+                                    usernameById.putAll(map)
+                                }
+                                // se fallisce: non succede niente, resta il fallback @id...
+                            }
+                        }
+                    },
                     onClickFriends = { showFriendsDialog = true }
                 )
 
                 Spacer(Modifier.height(24.dp))
             }
         }
-    ) { contentBehind() }
+    ) { contentBehind(::openUserProfileById) }
 
     // =========================
     // DIALOG: SEARCH USERS
@@ -217,7 +251,8 @@ fun ProfileBottomSheetBasic(
                     ) {
                         items(incomingRequests, key = { it.id }) { req ->
                             val fromUsername =
-                                friends.firstOrNull { it.id == req.fromUserId }?.username
+                                usernameById[req.fromUserId]
+                                    ?: friends.firstOrNull { it.id == req.fromUserId }?.username
                                     ?: ("@" + req.fromUserId.take(8))
 
                             IncomingRequestRow(
@@ -276,12 +311,11 @@ fun ProfileBottomSheetBasic(
     if (showUserProfileDialog) {
         val friend = selectedFriend
         val searchUser = selectedSearchUser
+        val userId = forcedUserId ?: friend?.id ?: searchUser?.id
 
-        if (friend == null && searchUser == null) {
+        if (userId == null) {
             showUserProfileDialog = false
         } else {
-            val userId = friend?.id ?: searchUser!!.id
-
             var loaded by remember(userId) { mutableStateOf<UserProfileDto?>(null) }
             var loading by remember(userId) { mutableStateOf(true) }
 
@@ -298,7 +332,10 @@ fun ProfileBottomSheetBasic(
                 userId = userId,
                 loaded = loaded,
                 loading = loading,
-                onDismiss = { showUserProfileDialog = false },
+                onDismiss = {
+                    showUserProfileDialog = false
+                    forcedUserId = null
+                },
                 onAdd = onSendFriendRequest,
                 onRemove = onRemoveFriend,
                 onRefresh = { refreshProfile() }

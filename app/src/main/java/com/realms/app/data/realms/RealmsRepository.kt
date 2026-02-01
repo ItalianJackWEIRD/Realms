@@ -101,6 +101,13 @@ class RealmsRepository(
         res.body() ?: error("getUserProfile empty body")
     }
 
+    suspend fun getUsernameMap(ids: List<String>): Map<String, String> {
+        if (ids.isEmpty()) return emptyMap()
+        val res = api.getUsernames(UsernamesRequest(ids.distinct()))
+        return res.items.associate { it.id to it.username }
+    }
+
+
 }
 
 
