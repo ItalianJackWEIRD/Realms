@@ -82,6 +82,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import java.time.Instant
 
 
 
@@ -379,6 +380,24 @@ fun MapScreenWithLocation(
             delay(15_000)
         }
     }
+
+    // =========================
+    // Clean Up MapPosts List
+    // =========================
+    LaunchedEffect(Unit) {
+        while (true) {
+            val now = Instant.now()
+
+            // rimuove solo quelli sicuramente scaduti
+            mapPosts = mapPosts.filter { p ->
+                val exp = parseInstantOrNull(p.expiresAtUtc)
+                exp == null || exp.isAfter(now)
+            }
+
+            delay(60_000) // ogni minuto
+        }
+    }
+
 
     // =========================
     // 5) PROFILE + FRIENDS + REQUESTS + SEARCH
@@ -1259,3 +1278,13 @@ private fun bitmapDescriptorFromVector(
 
     return BitmapDescriptorFactory.fromBitmap(bitmap)
 }
+
+private fun parseInstantOrNull(iso: String?): Instant? {
+    if (iso.isNullOrBlank()) return null
+    return try {
+        Instant.parse(iso) // es: "2026-02-02T21:05:12.123Z"
+    } catch (_: Exception) {
+        null
+    }
+}
+

@@ -84,5 +84,12 @@ interface RealmsApi {
     @DELETE("posts/{id}")
     suspend fun delete(@Path("id") id: Int)
 
+    @GET("posts/user/{userId}")
+    suspend fun getUserPosts(
+        @Path("userId") userId: String,
+        @Query("max") max: Int = 100
+    ): List<MapPostDto>
+
+
 
 }

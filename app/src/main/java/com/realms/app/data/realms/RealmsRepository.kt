@@ -161,6 +161,8 @@ class RealmsRepository(
 
     suspend fun deletePost(id: Int) = api.delete(id)
 
+    suspend fun getUserPosts(userId: String, max: Int = 100): List<MapPostDto> =
+        api.getUserPosts(userId = userId, max = max)
 
 }
 

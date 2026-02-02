@@ -28,15 +28,20 @@ import com.realms.app.data.realms.FriendDto
 import com.realms.app.data.realms.FriendRequestDto
 import com.realms.app.data.realms.SearchUserDto
 import com.realms.app.data.realms.UserProfileDto
+import com.realms.app.ui.posts.PostPopup
 import kotlinx.coroutines.launch
 import kotlin.math.sqrt
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.realms.app.data.realms.RealmsNetwork
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.ui.text.style.TextAlign
+import com.realms.app.data.realms.MapPostDto
+import java.time.Instant
+import java.time.Duration
 
 
 data class BasicProfileUi(
@@ -107,6 +112,43 @@ fun ProfileBottomSheetBasic(
             .onSuccess { me -> myUserId = me.id }
     }
 
+    //Post sulla mia pagina
+    // ===== MY POSTS (per il profilo nella bottom sheet) =====
+    var myPosts by remember { mutableStateOf<List<MapPostDto>>(emptyList()) }
+    var myPostsLoading by remember { mutableStateOf(false) }
+    var myPostsError by remember { mutableStateOf<String?>(null) }
+
+    var mySelectedPost by remember { mutableStateOf<MapPostDto?>(null) }
+    var showMyPostPopup by remember { mutableStateOf(false) }
+
+    suspend fun refreshMyPosts() {
+        val uid = myUserId ?: return
+        myPostsLoading = true
+        myPostsError = null
+        try {
+            myPosts = RealmsNetwork.repository.getUserPosts(userId = uid, max = 100)
+        } catch (e: Exception) {
+            myPosts = emptyList()
+            myPostsError = e.message ?: "getUserPosts failed"
+        }
+        myPostsLoading = false
+    }
+
+    LaunchedEffect(myUserId) {
+        if (myUserId != null) refreshMyPosts()
+    }
+
+    suspend fun deleteMyPost(postId: Int) {
+        myPostsError = null
+        try {
+            RealmsNetwork.repository.deletePost(postId)
+            refreshMyPosts()
+        } catch (e: Exception) {
+            myPostsError = e.message ?: "delete post failed"
+        }
+    }
+
+
 
     fun openUserProfileFromSearch(u: SearchUserDto) {
         // se è già amico, preferisci FriendDto (per nome/cognome)
@@ -166,12 +208,10 @@ fun ProfileBottomSheetBasic(
                     },
                     onClickIncoming = {
                         showIncomingDialog = true
-
-                        // prendi gli id unici delle richieste
                         val idsToFetch = incomingRequests
                             .map { it.fromUserId }
                             .distinct()
-                            .filter { it !in usernameById } // evita richieste duplicate se riapri
+                            .filter { it !in usernameById }
 
                         if (idsToFetch.isNotEmpty()) {
                             scope.launch {
@@ -180,11 +220,19 @@ fun ProfileBottomSheetBasic(
                                 }.onSuccess { map ->
                                     usernameById.putAll(map)
                                 }
-                                // se fallisce: non succede niente, resta il fallback @id...
                             }
                         }
                     },
-                    onClickFriends = { showFriendsDialog = true }
+                    onClickFriends = { showFriendsDialog = true },
+
+                    // >>> nuove props per posts del mio profilo
+                    myPosts = myPosts,
+                    myPostsLoading = myPostsLoading,
+                    myPostsError = myPostsError,
+                    onPostClick = { p ->
+                        mySelectedPost = p
+                        showMyPostPopup = true
+                    }
                 )
 
                 Spacer(Modifier.height(24.dp))
@@ -350,9 +398,38 @@ fun ProfileBottomSheetBasic(
                 },
                 onAdd = onSendFriendRequest,
                 onRemove = onRemoveFriend,
-                onRefresh = { refreshProfile() }
+                onRefresh = { refreshProfile() },
+                openUserProfile = { uid -> openUserProfileById(uid) }
             )
         }
+    }
+
+    // ===== POST POPUP (per i post del mio profilo in bottom sheet) =====
+    if (showMyPostPopup && mySelectedPost != null) {
+        val p = mySelectedPost!!
+
+        val canDelete = true // sono sempre i miei post qui
+
+        PostPopup(
+            post = p,
+            onDismiss = {
+                showMyPostPopup = false
+                mySelectedPost = null
+            },
+            onOpenProfile = { uid ->
+                // qui sei già "tu", quindi puoi anche non fare nulla
+                // oppure: openUserProfileById(uid)
+            },
+            canDelete = canDelete,
+            onDelete = {
+                scope.launch {
+                    deleteMyPost(p.id)
+                    showMyPostPopup = false
+                    mySelectedPost = null
+                }
+            },
+            postsError = myPostsError
+        )
     }
 }
 
@@ -363,7 +440,13 @@ private fun ProfileBasicContent(
     incomingCount: Int,
     onClickSearch: () -> Unit,
     onClickIncoming: () -> Unit,
-    onClickFriends: () -> Unit
+    onClickFriends: () -> Unit,
+
+    // >>> aggiunte per mostrare i post nel profilo "mio" (bottom sheet)
+    myPosts: List<MapPostDto>,
+    myPostsLoading: Boolean,
+    myPostsError: String?,
+    onPostClick: (MapPostDto) -> Unit
 ) {
     Column(
         Modifier
@@ -457,13 +540,68 @@ private fun ProfileBasicContent(
         )
 
         Spacer(Modifier.height(18.dp))
+
         Text(
-            text = "Post (in arrivo)",
+            text = "Posts",
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
         )
 
-        Spacer(Modifier.height(120.dp))
+        Spacer(Modifier.height(10.dp))
+
+        // Riquadro scrollabile come negli altri profili (duplicato semplice)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 220.dp, max = 420.dp)
+                .background(Color.White)
+        ) {
+            when {
+                myPostsLoading -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
+
+                myPostsError != null -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = myPostsError,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+
+                myPosts.isEmpty() -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "No posts yet",
+                            color = Color(0xFF666666),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(myPosts, key = { it.id }) { p ->
+                            UserPostRow(
+                                post = p,
+                                onClick = { onPostClick(p) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -604,6 +742,65 @@ private fun FriendRow(
 }
 
 @Composable
+private fun UserPostRow(
+    post: MapPostDto,
+    onClick: () -> Unit
+) {
+    val who = post.owner?.username?.let { "@$it" } ?: "@${post.ownerUserId.take(8)}"
+    val whenText = timeAgoLabel(post.createdAtUtc)
+    val caption = post.caption?.trim().orEmpty()
+    val captionShort = if (caption.length > 80) caption.take(80) + "…" else caption
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xFF2B2B2B).copy(alpha = 0.92f),
+        tonalElevation = 0.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // avatar (placeholder per ora)
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("👤", color = Color.White)
+            }
+
+            Spacer(Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (whenText.isNotBlank()) "$who · $whenText" else who,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(Modifier.height(4.dp))
+
+                Text(
+                    text = if (captionShort.isNotBlank()) captionShort else "—",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.78f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+
+@Composable
 private fun UserProfileDialog(
     userId: String,
     myUserId: String?,
@@ -612,7 +809,8 @@ private fun UserProfileDialog(
     onDismiss: () -> Unit,
     onAdd: suspend (String) -> Result<Unit>,
     onRemove: suspend (String) -> Result<Unit>,
-    onRefresh: suspend () -> Unit
+    onRefresh: suspend () -> Unit,
+    openUserProfile: (String) -> Unit // <<< AGGIUNTO
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -644,6 +842,34 @@ private fun UserProfileDialog(
 
     var isFriendState by remember(userId) { mutableStateOf(loaded?.isFriend == true) }
     var pendingState by remember(userId) { mutableStateOf(false) }
+
+    var userPosts by remember(userId) { mutableStateOf<List<MapPostDto>>(emptyList()) }
+    var postsLoading by remember(userId) { mutableStateOf(false) }
+    var postsError by remember(userId) { mutableStateOf<String?>(null) }
+
+    var selectedPost by remember { mutableStateOf<MapPostDto?>(null) }
+    var showPostPopup by remember { mutableStateOf(false) }
+
+    val isMe = (myUserId != null && userId == myUserId)
+    val canSeePosts = isMe || isFriendState
+
+    suspend fun refreshPosts() {
+        if (!canSeePosts) return
+        postsLoading = true
+        postsError = null
+        try {
+            userPosts = RealmsNetwork.repository.getUserPosts(userId = userId, max = 100)
+        } catch (e: Exception) {
+            userPosts = emptyList()
+            postsError = e.message ?: "getUserPosts failed"
+        }
+        postsLoading = false
+    }
+
+    LaunchedEffect(userId, canSeePosts) {
+        if (canSeePosts) refreshPosts()
+    }
+
 
     LaunchedEffect(loaded?.isFriend) {
         if (loaded != null) {
@@ -884,7 +1110,7 @@ private fun UserProfileDialog(
                 val canSeePosts = isMe || isFriendState
 
                 if (!canSeePosts) {
-                    // BLOCCO POST: locked
+                    // LOCK (come avevamo fatto)
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -904,41 +1130,147 @@ private fun UserProfileDialog(
                                 textAlign = TextAlign.Center
                             )
 
-                            Surface(
-                                shape = CircleShape,
-                                color = Color(0xFF2ECC71)
-                            ) {
+                            Surface(shape = CircleShape, color = Color(0xFF2ECC71)) {
                                 Icon(
                                     imageVector = Icons.Filled.Lock,
                                     contentDescription = "Locked",
                                     tint = Color.White,
-                                    modifier = Modifier
-                                        .padding(12.dp)
-                                        .size(26.dp)
+                                    modifier = Modifier.padding(12.dp).size(26.dp)
                                 )
                             }
                         }
                     }
                 } else {
-                    // BLOCCO POST: normale (placeholder)
+                    // LISTA POST
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
                     ) {
+                        // titolo (puoi anche toglierlo se vuoi solo riquadro)
                         Text(
-                            text = "Post (in arrivo)",
+                            text = "Posts",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                         )
 
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(10.dp))
 
-                        // TODO: lista post
-                        Spacer(Modifier.weight(1f))
+                        // riquadro scrollabile
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .background(Color.White)
+                        ) {
+                            when {
+                                postsLoading -> {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        CircularProgressIndicator()
+                                    }
+                                }
+
+                                postsError != null -> {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = postsError!!,
+                                            color = MaterialTheme.colorScheme.error,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                }
+
+                                userPosts.isEmpty() -> {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = "No posts yet",
+                                            color = Color(0xFF666666),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    }
+                                }
+
+                                else -> {
+                                    LazyColumn(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        items(userPosts, key = { it.id }) { p ->
+                                            UserPostRow(
+                                                post = p,
+                                                onClick = {
+                                                    selectedPost = p
+                                                    showPostPopup = true
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+        if (showPostPopup && selectedPost != null) {
+            val p = selectedPost!!
+            val canDelete = (myUserId != null && myUserId == p.ownerUserId)
+
+            PostPopup(
+                post = p,
+                onDismiss = {
+                    showPostPopup = false
+                    selectedPost = null
+                },
+                onOpenProfile = { uid ->
+                    // 1) chiudi popup
+                    showPostPopup = false
+                    selectedPost = null
+
+                    // 2) se vuoi: evita di riaprire lo stesso profilo
+                    if (uid != userId) {
+                        // chiudi anche il dialog profilo corrente (opzionale: io lo farei)
+                        onDismiss()
+                        openUserProfile(uid)
+                    }
+                },
+                canDelete = canDelete,
+                onDelete = {
+                    // delete + refresh lista profilo
+                    scope.launch {
+                        postsError = null
+                        try {
+                            RealmsNetwork.repository.deletePost(p.id)
+                            showPostPopup = false
+                            selectedPost = null
+                            refreshPosts() // <<< refresh lista profilo
+                        } catch (e: Exception) {
+                            postsError = e.message ?: "delete post failed"
+                        }
+                    }
+                },
+                postsError = postsError
+            )
+        }
+    }
+}
+
+private fun timeAgoLabel(createdAtUtc: String?): String {
+    if (createdAtUtc.isNullOrBlank()) return ""
+    return try {
+        val created = Instant.parse(createdAtUtc)
+        val now = Instant.now()
+        val d = Duration.between(created, now)
+
+        when {
+            d.toMinutes() < 1 -> "just now"
+            d.toHours() < 1 -> "${d.toMinutes()}m ago"
+            d.toDays() < 1 -> "${d.toHours()}h ago"
+            else -> "${d.toDays()}d ago"
+        }
+    } catch (_: Exception) {
+        ""
     }
 }
