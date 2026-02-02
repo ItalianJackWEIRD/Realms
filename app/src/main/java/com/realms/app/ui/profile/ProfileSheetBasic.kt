@@ -35,6 +35,8 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import com.realms.app.data.realms.RealmsNetwork
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.ui.text.style.TextAlign
 
 
 data class BasicProfileUi(
@@ -96,6 +98,15 @@ fun ProfileBottomSheetBasic(
     var forcedUserId by remember { mutableStateOf<String?>(null) }
 
     var searchText by remember { mutableStateOf("") }
+
+    // teniamo il nostro id per checks
+    var myUserId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        RealmsNetwork.repository.getMe()
+            .onSuccess { me -> myUserId = me.id }
+    }
+
 
     fun openUserProfileFromSearch(u: SearchUserDto) {
         // se è già amico, preferisci FriendDto (per nome/cognome)
@@ -330,6 +341,7 @@ fun ProfileBottomSheetBasic(
 
             UserProfileDialog(
                 userId = userId,
+                myUserId = myUserId,
                 loaded = loaded,
                 loading = loading,
                 onDismiss = {
@@ -594,6 +606,7 @@ private fun FriendRow(
 @Composable
 private fun UserProfileDialog(
     userId: String,
+    myUserId: String?,
     loaded: UserProfileDto?,
     loading: Boolean,
     onDismiss: () -> Unit,
@@ -867,13 +880,64 @@ private fun UserProfileDialog(
 
                 Spacer(Modifier.height(18.dp))
 
-                Text(
-                    text = "Post (in arrivo)",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                )
+                val isMe = (myUserId != null && userId == myUserId)
+                val canSeePosts = isMe || isFriendState
 
-                Spacer(Modifier.weight(1f))
+                if (!canSeePosts) {
+                    // BLOCCO POST: locked
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .background(Color.White),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.padding(24.dp)
+                        ) {
+                            Text(
+                                text = "You need to be friends with this person to see their posts",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFF666666),
+                                textAlign = TextAlign.Center
+                            )
+
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(0xFF2ECC71)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Lock,
+                                    contentDescription = "Locked",
+                                    tint = Color.White,
+                                    modifier = Modifier
+                                        .padding(12.dp)
+                                        .size(26.dp)
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // BLOCCO POST: normale (placeholder)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+                        Text(
+                            text = "Post (in arrivo)",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+
+                        // TODO: lista post
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
             }
         }
     }

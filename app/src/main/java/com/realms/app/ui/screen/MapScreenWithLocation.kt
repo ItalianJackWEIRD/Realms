@@ -682,16 +682,17 @@ fun MapScreenWithLocation(
 
                             val tint = remember(p.ownerUserId) { pickMarkerColor(p.ownerUserId) }
 
-                            // TODO: metti un’icona diversa per i post (vedi nota sotto)
-                            val icon = remember(p.id, tint) {
-                                bitmapDescriptorFromVector(context, R.drawable.ic_realm_pin, tint)
-                                // quando aggiungi la tua icona post, sostituisci con:
-                                // bitmapDescriptorFromVector(context, R.drawable.ic_post_pin, tint)
+                            val icon = remember(tint) {
+                                bitmapDescriptorFromVector(
+                                    context = context,
+                                    vectorResId = R.drawable.ic_post_lollipop,
+                                    tintColor = tint,
+                                    scale = 1.3f
+                                )
                             }
 
                             Marker(
                                 state = MarkerState(position = pos),
-                                title = "post ${p.id}",
                                 icon = icon,
                                 onClick = {
                                     selectedPost = p
