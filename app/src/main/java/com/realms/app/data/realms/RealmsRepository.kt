@@ -133,6 +133,34 @@ class RealmsRepository(
         return res.items.associate { it.id to it.username }
     }
 
+    // ==== POST ====
+    suspend fun createPost(
+        caption: String?,
+        photoUrl: String?,
+        lat: Double,
+        lon: Double,
+        visibility: String = "PUBLIC"
+    ): CreatePostResponse {
+        return api.create(
+            CreatePostRequest(
+                caption = caption,
+                photoUrl = photoUrl,
+                latitude = lat,
+                longitude = lon,
+                visibility = visibility
+            )
+        )
+    }
+
+    suspend fun getMapPosts(
+        lat: Double,
+        lon: Double,
+        radiusMeters: Double = 1000.0,
+        max: Int = 100
+    ): List<MapPostDto> = api.map(lat, lon, radiusMeters, max)
+
+    suspend fun deletePost(id: Int) = api.delete(id)
+
 
 }
 

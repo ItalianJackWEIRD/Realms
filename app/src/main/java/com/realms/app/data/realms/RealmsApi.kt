@@ -70,5 +70,19 @@ interface RealmsApi {
     @POST("users/usernames")
     suspend fun getUsernames(@Body req: UsernamesRequest): UsernamesResponse
 
+    @POST("posts")
+    suspend fun create(@Body req: CreatePostRequest): CreatePostResponse
+
+    @GET("posts/map")
+    suspend fun map(
+        @Query("lat") lat: Double,
+        @Query("lon") lon: Double,
+        @Query("radiusMeters") radiusMeters: Double = 1000.0,
+        @Query("max") max: Int = 100
+    ): List<MapPostDto>
+
+    @DELETE("posts/{id}")
+    suspend fun delete(@Path("id") id: Int)
+
 
 }

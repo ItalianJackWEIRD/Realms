@@ -35,6 +35,10 @@ import com.realms.app.data.realms.NearbyUserDto
 import com.realms.app.data.realms.UserProfileDto
 import com.realms.app.data.realms.RealmsNetwork
 import com.realms.app.data.realms.SearchUserDto
+import com.realms.app.data.realms.MapPostDto
+import com.realms.app.data.realms.CreatePostRequest
+import com.realms.app.data.realms.CreatePostResponse
+import com.realms.app.data.realms.PostOwnerDto
 import com.realms.app.data.weather.WeatherNetwork
 import com.realms.app.data.weather.WeatherUiModel
 import com.realms.app.ui.profile.BasicProfileUi
@@ -68,6 +72,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.opengl.Visibility
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.material.icons.filled.Settings
@@ -75,6 +80,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
+
 
 
 @Composable
@@ -83,6 +91,8 @@ fun MapScreenWithLocation(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    val haptic = LocalHapticFeedback.current
 
     // Permessi
     val hasFine =
@@ -101,6 +111,25 @@ fun MapScreenWithLocation(
     // Stato backend Realms
     var backendStatus by remember { mutableStateOf<String?>(null) }
     var nearbyUsers by remember { mutableStateOf<List<NearbyUserDto>>(emptyList()) }
+
+    // =========================
+    // POSTS state
+    // =========================
+    var mapPosts by remember { mutableStateOf<List<MapPostDto>>(emptyList()) }
+    var postsError by remember { mutableStateOf<String?>(null) }
+
+    var showCreatePost by remember { mutableStateOf(false) }
+    var createPostLatLng by remember { mutableStateOf<LatLng?>(null) }
+    var createCaption by remember { mutableStateOf("") }
+    var createVisibility by remember { mutableStateOf("PUBLIC") }
+
+
+    var selectedPost by remember { mutableStateOf<MapPostDto?>(null) }
+    var showPostPopup by remember { mutableStateOf(false) }
+
+    // mi serve per far vedere "Elimina" solo ai miei post
+    var myUserId by remember { mutableStateOf<String?>(null) }
+
 
     // =========================
     // POPUP friend marker + profile fetch cache
@@ -331,6 +360,22 @@ fun MapScreenWithLocation(
                     Log.e("Realms", "getNearbyUsers failed", e)
                 }
 
+
+            // Posts su mappa (stesso tick dei nearby)
+            try {
+                val list: List<MapPostDto> = RealmsNetwork.repository.getMapPosts(
+                    lat = lat,
+                    lon = lon,
+                    radiusMeters = 1000.0,
+                    max = 100
+                )
+                mapPosts = list
+                postsError = null
+            } catch (e: Exception) {
+                mapPosts = emptyList()
+                postsError = e.message ?: "getMapPosts failed"
+            }
+
             delay(15_000)
         }
     }
@@ -372,6 +417,9 @@ fun MapScreenWithLocation(
     LaunchedEffect(Unit) {
         RealmsNetwork.repository.getMe()
             .onSuccess { me ->
+                // SALVO ID UTENTE LOGGATO (se il DTO ce l’ha)
+                myUserId = runCatching { me.id }.getOrNull()
+
                 profile = BasicProfileUi(
                     username = me.username,
                     firstName = me.firstName,
@@ -413,6 +461,55 @@ fun MapScreenWithLocation(
                 .onFailure {
                     if (lastSearchQuery == trimmed) searchResults = emptyList()
                 }
+        }
+    }
+
+    fun loadPosts(centerLat: Double, centerLon: Double) {
+        scope.launch {
+            postsError = null
+            try {
+                val list: List<MapPostDto> = RealmsNetwork.repository.getMapPosts(
+                    lat = centerLat,
+                    lon = centerLon,
+                    radiusMeters = 1000.0,
+                    max = 100
+                )
+                mapPosts = list
+            } catch (e: Exception) {
+                postsError = e.message ?: "posts load failed"
+            }
+        }
+    }
+
+
+    fun createPost(lat: Double, lon: Double, caption: String?, visibility: String) {
+        scope.launch {
+            postsError = null
+            try {
+                RealmsNetwork.repository.createPost(
+                    caption = caption,
+                    photoUrl = null,
+                    lat = lat,
+                    lon = lon,
+                    visibility = visibility
+                )
+                loadPosts(lat, lon)
+            } catch (e: Exception) {
+                postsError = e.message ?: "create post failed"
+            }
+        }
+    }
+
+
+    fun deletePost(postId: Int, refreshLat: Double, refreshLon: Double) {
+        scope.launch {
+            postsError = null
+            try {
+                RealmsNetwork.repository.deletePost(postId)
+                loadPosts(refreshLat, refreshLon)
+            } catch (e: Exception) {
+                postsError = e.message ?: "delete post failed"
+            }
         }
     }
 
@@ -460,319 +557,537 @@ fun MapScreenWithLocation(
             },
             onCancel = { showEditProfile = false }
         )
-    } else
-    ProfileBottomSheetBasic(
-        profile = profile,
-        onLoadUserProfile = { userId ->
-            RealmsNetwork.repository.getUserProfile(userId)
-        },
+    } else {
+        ProfileBottomSheetBasic(
+            profile = profile,
+            onLoadUserProfile = { userId ->
+                RealmsNetwork.repository.getUserProfile(userId)
+            },
 
-        friendsCount = friendsCount,
-        friends = friends,
+            friendsCount = friendsCount,
+            friends = friends,
 
-        incomingRequests = incomingRequests,
-        onOpenSearch = { },
+            incomingRequests = incomingRequests,
+            onOpenSearch = { },
 
-        onSendFriendRequest = { toUserId ->
-            RealmsNetwork.repository.sendFriendRequest(toUserId)
-        },
+            onSendFriendRequest = { toUserId ->
+                RealmsNetwork.repository.sendFriendRequest(toUserId)
+            },
 
-        onRemoveFriend = { friendUserId ->
-            RealmsNetwork.repository.removeFriend(friendUserId).also {
-                if (it.isSuccess) refreshFriendsAndIncoming()
-            }
-        },
+            onRemoveFriend = { friendUserId ->
+                RealmsNetwork.repository.removeFriend(friendUserId).also {
+                    if (it.isSuccess) refreshFriendsAndIncoming()
+                }
+            },
 
-        onAcceptIncoming = { requestId ->
-            RealmsNetwork.repository.acceptFriendRequest(requestId).also {
-                if (it.isSuccess) refreshFriendsAndIncoming()
-            }
-        },
+            onAcceptIncoming = { requestId ->
+                RealmsNetwork.repository.acceptFriendRequest(requestId).also {
+                    if (it.isSuccess) refreshFriendsAndIncoming()
+                }
+            },
 
-        onRejectIncoming = { requestId ->
-            RealmsNetwork.repository.rejectFriendRequest(requestId).also {
-                if (it.isSuccess) refreshFriendsAndIncoming()
-            }
-        },
+            onRejectIncoming = { requestId ->
+                RealmsNetwork.repository.rejectFriendRequest(requestId).also {
+                    if (it.isSuccess) refreshFriendsAndIncoming()
+                }
+            },
 
-        searchResults = searchResults,
-        onSearchQuery = { q -> handleSearchQuery(q) },
+            searchResults = searchResults,
+            onSearchQuery = { q -> handleSearchQuery(q) },
 
-        contentBehind = { openUserProfile ->
-            Box(modifier = Modifier.fillMaxSize()) {
+            contentBehind = { openUserProfile ->
+                Box(modifier = Modifier.fillMaxSize()) {
 
 
 
-                GoogleMap(
-                    modifier = Modifier.fillMaxSize(),
-                    cameraPositionState = cameraPositionState,
-                    uiSettings = uiSettings,
-                    properties = properties,
-                    googleMapOptionsFactory = {
-                        GoogleMapOptions().mapId("62f2fd91384b16b631ee0872")
-                    },
-                    onMapLoaded = { mapLoaded = true }
-                ) {
-                    Circle(
-                        center = userLatLng,
-                        radius = radiusMeters,
-                        strokeWidth = 7f,
-                        strokeColor = androidx.compose.ui.graphics.Color(0xFF1B1B1B),
-                        fillColor = androidx.compose.ui.graphics.Color(0x55FDF6EC)
-                    )
+                    GoogleMap(
+                        modifier = Modifier.fillMaxSize(),
+                        cameraPositionState = cameraPositionState,
+                        uiSettings = uiSettings,
+                        properties = properties,
+                        googleMapOptionsFactory = {
+                            GoogleMapOptions().mapId("62f2fd91384b16b631ee0872")
+                        },
+                        onMapLoaded = { mapLoaded = true },
 
-                    Marker(
-                        state = myMarkerState,
-                        title = "Tu"
-                    )
+                        onMapLongClick = { latLng ->
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
 
-                    nearbyUsers.forEach { u ->
-                        val pos = LatLng(u.latitude, u.longitude)
-
-                        val haptic = LocalHapticFeedback.current
-
-                        val tint = remember(u.userId) { pickMarkerColor(u.userId) }
-                        val icon = remember(u.userId, tint) {
-                            bitmapDescriptorFromVector(context, R.drawable.ic_realm_pin, tint)
+                            createPostLatLng = latLng
+                            createCaption = ""
+                            showCreatePost = true
                         }
+                        ) {
+                        Circle(
+                            center = userLatLng,
+                            radius = radiusMeters,
+                            strokeWidth = 7f,
+                            strokeColor = androidx.compose.ui.graphics.Color(0xFF1B1B1B),
+                            fillColor = androidx.compose.ui.graphics.Color(0x55FDF6EC)
+                        )
 
                         Marker(
-                            state = MarkerState(position = pos),
-                            title = u.userId,
-                            icon = icon,
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress) // vibrazione super light
+                            state = myMarkerState,
+                            title = "Tu"
+                        )
 
-                                selectedUser = u
-                                showUserPopup = true
+                        nearbyUsers.forEach { u ->
+                            val pos = LatLng(u.latitude, u.longitude)
 
-                                val uid = u.userId
-                                profileError = null
+                            val haptic = LocalHapticFeedback.current
 
-                                // Se già in cache -> usa subito
-                                val cached = profileCache[uid]
-                                if (cached != null) {
-                                    selectedUserProfile = cached
-                                } else {
-                                    selectedUserProfile = null
-                                    profileLoading = true
-                                    scope.launch {
-                                        val res = RealmsNetwork.repository.getUserProfile(uid)
-                                        res.onSuccess { dto ->
-                                            profileCache[uid] = dto
-                                            selectedUserProfile = dto
-                                        }.onFailure { e ->
-                                            profileError = e.message ?: "getUserProfile failed"
+                            val tint = remember(u.userId) { pickMarkerColor(u.userId) }
+                            val icon = remember(u.userId, tint) {
+                                bitmapDescriptorFromVector(context, R.drawable.ic_realm_pin, tint)
+                            }
+
+                            Marker(
+                                state = MarkerState(position = pos),
+                                title = u.userId,
+                                icon = icon,
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress) // vibrazione super light
+
+                                    selectedUser = u
+                                    showUserPopup = true
+
+                                    val uid = u.userId
+                                    profileError = null
+
+                                    // Se già in cache -> usa subito
+                                    val cached = profileCache[uid]
+                                    if (cached != null) {
+                                        selectedUserProfile = cached
+                                    } else {
+                                        selectedUserProfile = null
+                                        profileLoading = true
+                                        scope.launch {
+                                            val res = RealmsNetwork.repository.getUserProfile(uid)
+                                            res.onSuccess { dto ->
+                                                profileCache[uid] = dto
+                                                selectedUserProfile = dto
+                                            }.onFailure { e ->
+                                                profileError = e.message ?: "getUserProfile failed"
+                                            }
+                                            profileLoading = false
                                         }
-                                        profileLoading = false
+                                    }
+                                    true
+                                }
+                            )
+                        }
+
+                        mapPosts.forEach { p ->
+                            val pos = LatLng(p.latitude, p.longitude)
+
+                            val tint = remember(p.ownerUserId) { pickMarkerColor(p.ownerUserId) }
+
+                            // TODO: metti un’icona diversa per i post (vedi nota sotto)
+                            val icon = remember(p.id, tint) {
+                                bitmapDescriptorFromVector(context, R.drawable.ic_realm_pin, tint)
+                                // quando aggiungi la tua icona post, sostituisci con:
+                                // bitmapDescriptorFromVector(context, R.drawable.ic_post_pin, tint)
+                            }
+
+                            Marker(
+                                state = MarkerState(position = pos),
+                                title = "post ${p.id}",
+                                icon = icon,
+                                onClick = {
+                                    selectedPost = p
+                                    showPostPopup = true
+                                    true
+                                }
+                            )
+                        }
+                    }
+
+                    // Create Post
+                    if (showCreatePost && createPostLatLng != null) {
+                        AlertDialog(
+                            onDismissRequest = { showCreatePost = false },
+                            title = { Text("Crea post") },
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    OutlinedTextField(
+                                        value = createCaption,
+                                        onValueChange = { createCaption = it },
+                                        label = { Text("Testo") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        maxLines = 4
+                                    )
+
+                                    Text(
+                                        text = "Visibilità",
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        FilterChip(
+                                            selected = createVisibility == "PUBLIC",
+                                            onClick = { createVisibility = "PUBLIC" },
+                                            label = { Text("Pubblico") }
+                                        )
+
+                                        FilterChip(
+                                            selected = createVisibility == "FRIENDS",
+                                            onClick = { createVisibility = "FRIENDS" },
+                                            label = { Text("Amici") }
+                                        )
+                                    }
+
+
+                                    OutlinedButton(
+                                        onClick = { /* TODO: pick/upload foto */ },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) { Text("Aggiungi foto (TODO)") }
+
+
+                                    if (postsError != null) {
+                                        Text(
+                                            text = postsError!!,
+                                            color = MaterialTheme.colorScheme.error,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
                                     }
                                 }
-                                true
-                            }
-                        )
-                    }
-                }
-
-                // =========================
-                // TOP BAR (meteo + settings)
-                // =========================
-                var showSettingsMenu by remember { mutableStateOf(false) }
-
-                val tempText = when {
-                    weatherError != null -> "--°"
-                    weather != null -> "${weather!!.temperatureC}°"
-                    else -> "--°"
-                }
-
-                val statusText = when {
-                    weatherError != null -> "Offline"
-                    weather != null -> weather!!.label
-                    else -> "Loading…"
-                }
-
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                        .height(90.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                    tonalElevation = 10.dp,
-                    shadowElevation = 14.dp,
-                    shape = RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp)
-                            .windowInsetsPadding(WindowInsets.statusBars),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = tempText,
-                            style = MaterialTheme.typography.titleLarge
-                        )
-
-                        Spacer(modifier = Modifier.weight(1.2f))
-
-                        Text(
-                            text = statusText,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-
-                        Spacer(modifier = Modifier.weight(1f))
-
-                        Box {
-                            IconButton(onClick = { showSettingsMenu = true }) {
-                                Icon(
-                                    imageVector = Icons.Filled.Settings,
-                                    contentDescription = "Settings"
-                                )
-                            }
-
-                            DropdownMenu(
-                                expanded = showSettingsMenu,
-                                onDismissRequest = { showSettingsMenu = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Edit profile") },
-                                    onClick = {
-                                        showSettingsMenu = false
-                                        showEditProfile = true
-                                    }
-                                )
-
-                                DropdownMenuItem(
-                                    text = { Text("Logout") },
-                                    onClick = {
-                                        showSettingsMenu = false
-                                        onLogout()
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                FloatingActionButton(
-                    onClick = {
-                        followOn = true
-                        if (mapLoaded) {
-                            val current = cameraPositionState.position
-                            val updated = CameraPosition.Builder(current)
-                                .target(userLatLng)
-                                .zoom(initialZoom)
-                                .tilt(fixedTilt)
-                                .bearing(phoneBearing)
-                                .build()
-                            cameraPositionState.move(CameraUpdateFactory.newCameraPosition(updated))
-                        }
-                    },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 16.dp, bottom = 175.dp)
-                ) {
-                    Icon(Icons.Filled.LocationOn, contentDescription = "Follow")
-                }
-
-                if (showUserPopup && selectedUser != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(androidx.compose.ui.graphics.Color(0x66000000))
-                            .clickable {
-                                showUserPopup = false
-                                selectedUser = null
-                                // non pulisco cache
                             },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth(0.85f)
-                                .wrapContentHeight()
-                        ) {
-                            Box(modifier = Modifier.padding(16.dp)) {
-                                Icon(
-                                    imageVector = Icons.Filled.Close,
-                                    contentDescription = "Close",
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .clickable {
-                                            showUserPopup = false
-                                            selectedUser = null
-                                        }
-                                )
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        val p = createPostLatLng!!
+                                        val cap = createCaption.trim().takeIf { it.isNotBlank() }
+                                        createPost(p.latitude, p.longitude, cap, createVisibility)
+                                        showCreatePost = false
+                                    }
+                                ) { Text("Pubblica") }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showCreatePost = false }) { Text("Annulla") }
+                            }
+                        )
+                    }
 
-                                Column(
-                                    modifier = Modifier.padding(top = 8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    // =========================
+                    // TOP BAR (meteo + settings)
+                    // =========================
+                    var showSettingsMenu by remember { mutableStateOf(false) }
+
+                    val tempText = when {
+                        weatherError != null -> "--°"
+                        weather != null -> "${weather!!.temperatureC}°"
+                        else -> "--°"
+                    }
+
+                    val statusText = when {
+                        weatherError != null -> "Offline"
+                        weather != null -> weather!!.label
+                        else -> "Loading…"
+                    }
+
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .height(90.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                        tonalElevation = 10.dp,
+                        shadowElevation = 14.dp,
+                        shape = RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp)
+                                .windowInsetsPadding(WindowInsets.statusBars),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = tempText,
+                                style = MaterialTheme.typography.titleLarge
+                            )
+
+                            Spacer(modifier = Modifier.weight(1.2f))
+
+                            Text(
+                                text = statusText,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+
+                            Spacer(modifier = Modifier.weight(1f))
+
+                            Box {
+                                IconButton(onClick = { showSettingsMenu = true }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Settings,
+                                        contentDescription = "Settings"
+                                    )
+                                }
+
+                                DropdownMenu(
+                                    expanded = showSettingsMenu,
+                                    onDismissRequest = { showSettingsMenu = false }
                                 ) {
-                                    // HEADER: placeholder avatar + username
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                    DropdownMenuItem(
+                                        text = { Text("Edit profile") },
+                                        onClick = {
+                                            showSettingsMenu = false
+                                            showEditProfile = true
+                                        }
+                                    )
+
+                                    DropdownMenuItem(
+                                        text = { Text("Logout") },
+                                        onClick = {
+                                            showSettingsMenu = false
+                                            onLogout()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    FloatingActionButton(
+                        onClick = {
+                            followOn = true
+                            if (mapLoaded) {
+                                val current = cameraPositionState.position
+                                val updated = CameraPosition.Builder(current)
+                                    .target(userLatLng)
+                                    .zoom(initialZoom)
+                                    .tilt(fixedTilt)
+                                    .bearing(phoneBearing)
+                                    .build()
+                                cameraPositionState.move(CameraUpdateFactory.newCameraPosition(updated))
+                            }
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 16.dp, bottom = 175.dp)
+                    ) {
+                        Icon(Icons.Filled.LocationOn, contentDescription = "Follow")
+                    }
+
+                    if (showUserPopup && selectedUser != null) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(androidx.compose.ui.graphics.Color(0x66000000))
+                                .clickable {
+                                    showUserPopup = false
+                                    selectedUser = null
+                                    // non pulisco cache
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth(0.85f)
+                                    .wrapContentHeight()
+                            ) {
+                                Box(modifier = Modifier.padding(16.dp)) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Close,
+                                        contentDescription = "Close",
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .clickable {
+                                                showUserPopup = false
+                                                selectedUser = null
+                                            }
+                                    )
+
+                                    Column(
+                                        modifier = Modifier.padding(top = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                                    ) {
+                                        // HEADER: placeholder avatar + username
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(44.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color.Black),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text("👤", color = Color.White)
+                                            }
+
+                                            Spacer(Modifier.width(12.dp))
+
+                                            val uname = selectedUserProfile?.username
+                                            val titleText = when {
+                                                profileLoading -> "Loading..."
+                                                !uname.isNullOrBlank() -> "@$uname"
+                                                else -> "@${selectedUser!!.userId.take(8)}"
+                                            }
+
+                                            Text(
+                                                text = titleText,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+
+                                        // Error (se c'è)
+                                        if (profileError != null) {
+                                            Text(
+                                                text = profileError!!,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+
+                                        // 3 BOTTONI (TODO azioni)
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Button(
+                                                onClick = {
+                                                    val uid = selectedUser!!.userId
+                                                    showUserPopup = false
+                                                    selectedUser = null
+
+                                                    openUserProfile(uid)
+                                                },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text("Go to profile")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (showPostPopup && selectedPost != null) {
+                        val p = selectedPost!!
+
+                        AlertDialog(
+                            onDismissRequest = {
+                                showPostPopup = false
+                                selectedPost = null
+                            },
+                            title = {
+                                // banner "owner" cliccabile: riusa openUserProfile
+                                Surface(
+                                    tonalElevation = 2.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            showPostPopup = false
+                                            selectedPost = null
+                                            openUserProfile(p.ownerUserId)
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Box(
                                             modifier = Modifier
-                                                .size(44.dp)
+                                                .size(36.dp)
                                                 .clip(CircleShape)
                                                 .background(Color.Black),
                                             contentAlignment = Alignment.Center
-                                        ) {
-                                            Text("👤", color = Color.White)
-                                        }
+                                        ) { Text("👤", color = Color.White) }
 
                                         Spacer(Modifier.width(12.dp))
 
-                                        val uname = selectedUserProfile?.username
-                                        val titleText = when {
-                                            profileLoading -> "Loading..."
-                                            !uname.isNullOrBlank() -> "@$uname"
-                                            else -> "@${selectedUser!!.userId.take(8)}"
-                                        }
+                                        val title = p.owner?.username?.takeIf { it.isNotBlank() }?.let { "@$it" }
+                                            ?: "@${p.ownerUserId.take(8)}"
 
-                                        Text(
-                                            text = titleText,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-
-                                    // Error (se c'è)
-                                    if (profileError != null) {
-                                        Text(
-                                            text = profileError!!,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.error
-                                        )
-                                    }
-
-                                    // 3 BOTTONI (TODO azioni)
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        Button(
-                                            onClick = {
-                                                val uid = selectedUser!!.userId
-                                                showUserPopup = false
-                                                selectedUser = null
-
-                                                openUserProfile(uid)
-                                            },
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Text("Go to profile")
+                                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         }
                                     }
                                 }
+                            },
+                            text = {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    val isFriends = p.visibility.equals("FRIENDS", ignoreCase = true)
+
+                                    if (isFriends) {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = Color(0xFF2ECC71) // verde
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Lock,
+                                                contentDescription = "Friends only",
+                                                tint = Color.White,
+                                                modifier = Modifier.padding(6.dp).size(18.dp)
+                                            )
+                                        }
+                                    } else {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = Color(0xFFBDBDBD) // grigio
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.LockOpen,
+                                                contentDescription = "Public",
+                                                tint = Color.White,
+                                                modifier = Modifier.padding(6.dp).size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text(p.caption ?: "Nessun testo")
+
+                                    if (!p.photoUrl.isNullOrBlank()) {
+                                        Text("Foto: TODO render")
+                                    } else {
+                                        Text("Nessuna foto")
+                                    }
+
+                                    if (postsError != null) {
+                                        Text(
+                                            text = postsError!!,
+                                            color = MaterialTheme.colorScheme.error,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    showPostPopup = false
+                                    selectedPost = null
+                                }) { Text("Chiudi") }
+                            },
+                            dismissButton = {
+                                val canDelete = (myUserId != null && myUserId == p.ownerUserId)
+                                if (canDelete) {
+                                    TextButton(
+                                        onClick = {
+                                            val refreshLat = userLatLng.latitude
+                                            val refreshLon = userLatLng.longitude
+                                            deletePost(p.id, refreshLat, refreshLon)
+                                            showPostPopup = false
+                                            selectedPost = null
+                                        }
+                                    ) { Text("Elimina") }
+                                }
                             }
-                        }
+                        )
                     }
                 }
             }
-        }
-    )
+        )
+    }
 
     // Primo center (una sola volta)
     LaunchedEffect(mapLoaded, pendingCenter) {
