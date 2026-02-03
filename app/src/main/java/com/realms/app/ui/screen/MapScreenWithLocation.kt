@@ -83,6 +83,9 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import java.time.Instant
+import com.realms.app.ui.feed.FeedOverlay
+import androidx.compose.material.icons.filled.Menu
+import com.realms.app.ui.util.timeAgoEn
 
 
 
@@ -157,6 +160,12 @@ fun MapScreenWithLocation(
     var followOn by remember { mutableStateOf(true) }
     // Bearing telefono (0..360). Lo usiamo per ruotare la camera quando FOLLOW è attivo.
     var phoneBearing by remember { mutableStateOf(0f) }
+
+    // FEED State
+    var showFeed by remember { mutableStateOf(false) }
+    var feedPosts by remember { mutableStateOf<List<MapPostDto>>(emptyList()) }
+    var feedLoading by remember { mutableStateOf(false) }
+    var feedError by remember { mutableStateOf<String?>(null) }
 
 
     // Config mappa
@@ -532,6 +541,22 @@ fun MapScreenWithLocation(
         }
     }
 
+    fun loadFeed() {
+        scope.launch {
+            feedLoading = true
+            feedError = null
+            try {
+                feedPosts = RealmsNetwork.repository.getFeedPosts(max = 150)
+            } catch (e: Exception) {
+                feedPosts = emptyList()
+                feedError = e.message ?: "feed load failed"
+            } finally {
+                feedLoading = false
+            }
+        }
+    }
+
+
     if (showEditProfile) {
         EditProfileScreen(
             initialUsername = profile.username,
@@ -616,10 +641,7 @@ fun MapScreenWithLocation(
 
             contentBehind = { openUserProfile ->
                 Box(modifier = Modifier.fillMaxSize()) {
-
-
-
-                    GoogleMap(
+                GoogleMap(
                         modifier = Modifier.fillMaxSize(),
                         cameraPositionState = cameraPositionState,
                         uiSettings = uiSettings,
@@ -824,22 +846,37 @@ fun MapScreenWithLocation(
                                 .windowInsetsPadding(WindowInsets.statusBars),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = tempText,
-                                style = MaterialTheme.typography.titleLarge
-                            )
-
-                            Spacer(modifier = Modifier.weight(1.2f))
-
-                            Text(
-                                text = statusText,
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            // SINISTRA: menu/feed
+                            IconButton(
+                                onClick = {
+                                    showFeed = true
+                                    loadFeed()
+                                }
+                            ) {
+                                Icon(Icons.Filled.Menu, contentDescription = "Feed")
+                            }
 
                             Spacer(modifier = Modifier.weight(1f))
 
+                            // CENTRO: stato + gradi
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = statusText,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = tempText,
+                                    style = MaterialTheme.typography.titleLarge
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.weight(1f))
+
+                            // DESTRA: settings (come già hai)
                             Box {
                                 IconButton(onClick = { showSettingsMenu = true }) {
                                     Icon(
@@ -1034,15 +1071,21 @@ fun MapScreenWithLocation(
                             text = {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
+                                    // time ago
+                                    Text(
+                                        text = timeAgoEn(p.createdAtUtc),
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+
+                                    Spacer(Modifier.width(10.dp))
+
                                     val isFriends = p.visibility.equals("FRIENDS", ignoreCase = true)
 
                                     if (isFriends) {
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = Color(0xFF2ECC71) // verde
-                                        ) {
+                                        Surface(shape = CircleShape, color = Color(0xFF2ECC71)) {
                                             Icon(
                                                 imageVector = Icons.Filled.Lock,
                                                 contentDescription = "Friends only",
@@ -1051,15 +1094,12 @@ fun MapScreenWithLocation(
                                             )
                                         }
                                     } else {
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = Color(0xFFBDBDBD) // grigio
-                                        ) {
+                                        Surface(shape = CircleShape, color = Color(0xFFBDBDBD)) {
                                             Icon(
                                                 imageVector = Icons.Filled.LockOpen,
                                                 contentDescription = "Public",
                                                 tint = Color.White,
-                                                modifier = Modifier.padding(6.dp).size(18.dp)
+                                                modifier = Modifier.padding(6.dp).size(18.dp).size(18.dp)
                                             )
                                         }
                                     }
@@ -1105,6 +1145,23 @@ fun MapScreenWithLocation(
                         )
                     }
                 }
+
+                if (showFeed) {
+                    FeedOverlay(
+                        posts = feedPosts,
+                        isLoading = feedLoading,
+                        error = feedError,
+                        onRetry = { loadFeed() },
+                        onPostClick = { p ->
+                            // riuso il tuo popup già esistente
+                            showFeed = false
+                            selectedPost = p
+                            showPostPopup = true
+                        },
+                        onClose = { showFeed = false }
+                    )
+                }
+
             }
         )
     }
@@ -1287,4 +1344,6 @@ private fun parseInstantOrNull(iso: String?): Instant? {
         null
     }
 }
+
+
 

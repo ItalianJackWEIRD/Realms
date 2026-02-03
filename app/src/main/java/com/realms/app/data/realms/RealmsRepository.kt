@@ -164,6 +164,12 @@ class RealmsRepository(
     suspend fun getUserPosts(userId: String, max: Int = 100): List<MapPostDto> =
         api.getUserPosts(userId = userId, max = max)
 
+
+    suspend fun getFeedPosts(max: Int = 150): List<MapPostDto> {
+        return api.getFeedPosts(max)
+    }
+
+
 }
 
 

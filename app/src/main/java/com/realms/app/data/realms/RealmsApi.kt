@@ -90,6 +90,9 @@ interface RealmsApi {
         @Query("max") max: Int = 100
     ): List<MapPostDto>
 
-
+    @GET("posts/feed")
+    suspend fun getFeedPosts(
+        @Query("max") max: Int = 150
+    ): List<MapPostDto>
 
 }
