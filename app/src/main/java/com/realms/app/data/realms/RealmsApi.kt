@@ -8,7 +8,9 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.http.DELETE
 import retrofit2.http.PUT
-
+import okhttp3.MultipartBody
+import retrofit2.http.Multipart
+import retrofit2.http.Part
 interface RealmsApi {
 
     @POST("locations/update")
@@ -95,4 +97,16 @@ interface RealmsApi {
         @Query("max") max: Int = 150
     ): List<MapPostDto>
 
+    @Multipart
+    @POST("users/profile-picture")
+    suspend fun uploadProfilePicture(
+        @Part file: MultipartBody.Part
+    ): Response<UploadPictureResponse>
+
 }
+
+// DTO per la risposta (quello che ritorna il tuo BE)
+data class UploadPictureResponse(
+    val message: String,
+    val url: String
+)

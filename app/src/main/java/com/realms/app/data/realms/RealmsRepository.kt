@@ -1,4 +1,7 @@
 package com.realms.app.data.realms
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class RealmsRepository(
     private val api: RealmsApi
@@ -169,6 +172,17 @@ class RealmsRepository(
         return api.getFeedPosts(max)
     }
 
+
+    suspend fun uploadProfilePicture(imageBytes: ByteArray): Result<String> = runCatching {
+        // Prepariamo il body multipart
+        val requestFile = imageBytes.toRequestBody("image/jpeg".toMediaTypeOrNull())
+        val body = MultipartBody.Part.createFormData("file", "profile.jpg", requestFile)
+
+        val res = api.uploadProfilePicture(body)
+        if (!res.isSuccessful) error("uploadProfilePicture HTTP ${res.code()}")
+
+        res.body()?.url ?: error("Empty response body")
+    }
 
 }
 

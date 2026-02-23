@@ -89,6 +89,21 @@ dependencies {
     implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
+    // ---------- COIL -----------
+    // 1. Coil per caricare le immagini (necessaria per AsyncImage)
+    implementation("io.coil-kt:coil-compose:2.6.0")
+
+    // 2. Icone Material estese (necessaria per AddAPhoto)
+    implementation("androidx.compose.material:material-icons-extended:1.5.4")
+
+    // 3. Retrofit & OkHttp (già dovresti averle, ma per sicurezza)
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+
+    // Dipendenza per SerializedName (Gson)
+    implementation("com.google.code.gson:gson:2.10.1")
+
     // ---------- TEST ----------
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

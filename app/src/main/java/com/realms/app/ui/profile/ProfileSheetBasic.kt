@@ -42,13 +42,18 @@ import androidx.compose.ui.text.style.TextAlign
 import com.realms.app.data.realms.MapPostDto
 import java.time.Instant
 import java.time.Duration
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import com.google.gson.annotations.SerializedName
 
 
 data class BasicProfileUi(
     val username: String,
     val firstName: String,
     val lastName: String,
-    val bio: String?
+    val bio: String?,
+    @SerializedName("profilePhotoUrl")
+    val profilePhotoUrl: String? = null
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,7 +94,7 @@ fun ProfileBottomSheetBasic(
 
     val scope = rememberCoroutineScope()
     val usernameById = remember { mutableStateMapOf<String, String>() }
-
+    val photoById = remember { mutableStateMapOf<String, String?>() }
 
     // Popup profilo utente esterno (da search o da friends list)
     var showUserProfileDialog by remember { mutableStateOf(false) }
@@ -208,17 +213,15 @@ fun ProfileBottomSheetBasic(
                     },
                     onClickIncoming = {
                         showIncomingDialog = true
-                        val idsToFetch = incomingRequests
-                            .map { it.fromUserId }
-                            .distinct()
-                            .filter { it !in usernameById }
+                        val idsToFetch = incomingRequests.map { it.fromUserId }.distinct()
 
-                        if (idsToFetch.isNotEmpty()) {
-                            scope.launch {
-                                runCatching {
-                                    RealmsNetwork.repository.getUsernameMap(idsToFetch)
-                                }.onSuccess { map ->
-                                    usernameById.putAll(map)
+                        scope.launch {
+                            idsToFetch.forEach { uid ->
+                                if (uid !in photoById) {
+                                    RealmsNetwork.repository.getUserProfile(uid).onSuccess { userDto ->
+                                        usernameById[uid] = userDto.username
+                                        photoById[uid] = userDto.profilePhotoUrl // Salviamo la foto!
+                                    }
                                 }
                             }
                         }
@@ -309,14 +312,13 @@ fun ProfileBottomSheetBasic(
                             .heightIn(max = 420.dp)
                     ) {
                         items(incomingRequests, key = { it.id }) { req ->
-                            val fromUsername =
-                                usernameById[req.fromUserId]
-                                    ?: friends.firstOrNull { it.id == req.fromUserId }?.username
-                                    ?: ("@" + req.fromUserId.take(8))
+                            val fromUsername = usernameById[req.fromUserId] ?: "@${req.fromUserId.take(8)}"
+                            val fromPhoto = photoById[req.fromUserId] // Prendi la foto dalla mappa
 
                             IncomingRequestRow(
                                 req = req,
                                 fromUsername = fromUsername,
+                                fromPhotoUrl = fromPhoto, // Passala qui
                                 onAccept = onAcceptIncoming,
                                 onReject = onRejectIncoming
                             )
@@ -463,8 +465,20 @@ private fun ProfileBasicContent(
                 modifier = Modifier
                     .size(86.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 1f))
-            )
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!profile.profilePhotoUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = profile.profilePhotoUrl,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Text("👤", style = MaterialTheme.typography.headlineLarge)
+                }
+            }
 
             Box(
                 modifier = Modifier
@@ -621,8 +635,21 @@ private fun SearchUserRow(
             modifier = Modifier
                 .size(44.dp)
                 .clip(CircleShape)
-                .background(Color.Black)
-        )
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (!user.profilePhotoUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = user.profilePhotoUrl,
+                    contentDescription = "Foto di ${user.username}",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                // Icona di default se l'utente non ha una foto
+                Text("👤", style = MaterialTheme.typography.bodyLarge)
+            }
+        }
 
         Spacer(Modifier.width(12.dp))
 
@@ -641,6 +668,7 @@ private fun SearchUserRow(
 private fun IncomingRequestRow(
     req: FriendRequestDto,
     fromUsername: String,
+    fromPhotoUrl: String?,
     onAccept: suspend (Long) -> Result<Unit>,
     onReject: suspend (Long) -> Result<Unit>
 ) {
@@ -657,8 +685,23 @@ private fun IncomingRequestRow(
             modifier = Modifier
                 .size(44.dp)
                 .clip(CircleShape)
-                .background(Color.Black)
-        )
+                // Usiamo un grigio leggero come sfondo mentre carica o se è vuoto
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (!fromPhotoUrl.isNullOrBlank()) {
+                // Se abbiamo l'URL, Coil scarica e mostra la foto
+                AsyncImage(
+                    model = fromPhotoUrl,
+                    contentDescription = "Foto profilo di $fromUsername",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                // Fallback: se non c'è la foto, mettiamo l'emoji o un'icona
+                Text("👤", style = MaterialTheme.typography.bodyLarge)
+            }
+        }
 
         Spacer(Modifier.width(12.dp))
 
@@ -721,12 +764,26 @@ private fun FriendRow(
             .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // --- BOX AVATAR AMICO ---
         Box(
             modifier = Modifier
                 .size(44.dp)
                 .clip(CircleShape)
-                .background(Color.Black)
-        )
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (!friend.profilePhotoUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = friend.profilePhotoUrl,
+                    contentDescription = "Foto di ${friend.username}",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                // Fallback se l'amico non ha una foto
+                Text("👤")
+            }
+        }
 
         Spacer(Modifier.width(12.dp))
 
@@ -983,8 +1040,22 @@ private fun UserProfileDialog(
                         modifier = Modifier
                             .size(86.dp)
                             .clip(CircleShape)
-                            .background(Color.Black)
-                    )
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        // Usiamo l'URL che arriva dall'oggetto 'loaded'
+                        if (!loaded?.profilePhotoUrl.isNullOrBlank()) {
+                            AsyncImage(
+                                model = loaded?.profilePhotoUrl,
+                                contentDescription = "Foto di ${loaded?.username}",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            // Fallback: icona di default se l'utente non ha una foto
+                            Text("👤", style = MaterialTheme.typography.headlineLarge)
+                        }
+                    }
 
                     Box(
                         modifier = Modifier

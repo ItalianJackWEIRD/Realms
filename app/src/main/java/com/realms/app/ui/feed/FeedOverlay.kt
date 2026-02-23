@@ -13,7 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.realms.app.data.realms.MapPostDto
-import com.realms.app.ui.util.timeAgoEn
+import com.realms.app.ui.utils.timeAgoEn
 
 data class FeedSection(
     val ownerUserId: String,

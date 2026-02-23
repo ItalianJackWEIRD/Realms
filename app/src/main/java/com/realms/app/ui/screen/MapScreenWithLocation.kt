@@ -36,9 +36,6 @@ import com.realms.app.data.realms.UserProfileDto
 import com.realms.app.data.realms.RealmsNetwork
 import com.realms.app.data.realms.SearchUserDto
 import com.realms.app.data.realms.MapPostDto
-import com.realms.app.data.realms.CreatePostRequest
-import com.realms.app.data.realms.CreatePostResponse
-import com.realms.app.data.realms.PostOwnerDto
 import com.realms.app.data.weather.WeatherNetwork
 import com.realms.app.data.weather.WeatherUiModel
 import com.realms.app.ui.profile.BasicProfileUi
@@ -72,7 +69,6 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.opengl.Visibility
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.material.icons.filled.Settings
@@ -85,8 +81,8 @@ import androidx.compose.material.icons.filled.LockOpen
 import java.time.Instant
 import com.realms.app.ui.feed.FeedOverlay
 import androidx.compose.material.icons.filled.Menu
-import com.realms.app.ui.util.timeAgoEn
-
+import com.realms.app.ui.utils.timeAgoEn
+import com.realms.app.ui.viewmodel.EditProfileViewModel
 
 
 @Composable
@@ -97,6 +93,9 @@ fun MapScreenWithLocation(
     val scope = rememberCoroutineScope()
 
     val haptic = LocalHapticFeedback.current
+
+    // Inizializza il ViewModel (Assicurati di passare il repository)
+    val editViewModel = remember { EditProfileViewModel(RealmsNetwork.repository) }
 
     // Permessi
     val hasFine =
@@ -445,17 +444,16 @@ fun MapScreenWithLocation(
     LaunchedEffect(Unit) {
         RealmsNetwork.repository.getMe()
             .onSuccess { me ->
-                // SALVO ID UTENTE LOGGATO (se il DTO ce l’ha)
                 myUserId = runCatching { me.id }.getOrNull()
 
                 profile = BasicProfileUi(
                     username = me.username,
                     firstName = me.firstName,
                     lastName = me.lastName,
-                    bio = me.bio
+                    bio = me.bio,
+                    profilePhotoUrl = me.profilePhotoUrl // AGGIUNGI QUESTA RIGA
                 )
             }
-
         refreshFriendsAndIncoming()
     }
 
@@ -563,44 +561,40 @@ fun MapScreenWithLocation(
             initialFirstName = profile.firstName,
             initialLastName = profile.lastName,
             initialBio = profile.bio,
-            initialProfilePictureUrl = null,
-            onSave = { newUsername, newFirstName, newLastName, newBio, _ ->
-                editProfileError = null
-                editProfileLoading = true
-
-                scope.launch {
-                    val result = RealmsNetwork.repository.updateMe(
-                        username = newUsername,
-                        firstName = newFirstName,
-                        lastName = newLastName,
-                        bio = newBio,
-                        profilePhotoUrl = null // TODO: quando aggiungi foto
-                    )
-
-                    result
-                        .onSuccess {
-                            // Aggiorna UI locale (così vedi subito il cambio)
-                            profile = profile.copy(
-                                username = newUsername,
-                                firstName = newFirstName,
-                                lastName = newLastName,
-                                bio = newBio
-                            )
-                            showEditProfile = false
-                        }
-                        .onFailure { e ->
-                            editProfileError =
-                                if (e.message?.contains("username already taken", ignoreCase = true) == true)
-                                    "Username già preso"
-                                else
-                                    (e.message ?: "Errore aggiornamento profilo")
-                        }
-
-                    editProfileLoading = false
-                }
+            // Qui passiamo l'URL attuale se esiste, così Coil lo carica nell'anteprima
+            initialProfilePictureUrl = selectedUserProfile?.profilePhotoUrl,
+            isLoading = editViewModel.isLoading,
+            errorMessage = editViewModel.errorMessage,
+            onSave = { newUsername, newFirstName, newLastName, newBio, imageUri ->
+                // Chiamiamo il ViewModel che gestisce tutto (Resize -> Upload -> UpdateMe)
+                editViewModel.updateProfile(
+                    context = context,
+                    username = newUsername,
+                    firstName = newFirstName,
+                    lastName = newLastName,
+                    bio = newBio,
+                    imageUri = imageUri
+                )
             },
             onCancel = { showEditProfile = false }
         )
+
+        // Effetto per chiudere la schermata solo quando il ViewModel conferma il successo
+        LaunchedEffect(editViewModel.isSuccess) {
+            if (editViewModel.isSuccess) {
+                RealmsNetwork.repository.getMe().onSuccess { me ->
+                    profile = BasicProfileUi(
+                        me.username,
+                        me.firstName,
+                        me.lastName,
+                        me.bio,
+                        profilePhotoUrl = me.profilePhotoUrl // AGGIUNGI QUESTA RIGA
+                    )
+                }
+                showEditProfile = false
+                editViewModel.isSuccess = false
+            }
+        }
     } else {
         ProfileBottomSheetBasic(
             profile = profile,

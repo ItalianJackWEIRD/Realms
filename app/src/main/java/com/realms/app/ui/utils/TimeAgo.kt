@@ -1,4 +1,4 @@
-package com.realms.app.ui.util
+package com.realms.app.ui.utils
 
 import java.time.Duration
 import java.time.Instant
