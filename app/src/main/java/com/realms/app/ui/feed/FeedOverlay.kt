@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.realms.app.data.realms.MapPostDto
 import com.realms.app.ui.utils.timeAgoEn
+import androidx.compose.material.icons.filled.Image
 
 data class FeedSection(
     val ownerUserId: String,
@@ -183,12 +184,28 @@ fun FeedOverlay(
                                     shape = RoundedCornerShape(14.dp)
                                 ) {
                                     Column(Modifier.padding(12.dp)) {
-                                        Row(Modifier.fillMaxWidth()) {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically // Centra icone e testo
+                                        ) {
                                             Text(
                                                 if (isFriends(p)) "FRIENDS" else "PUBLIC",
                                                 style = MaterialTheme.typography.labelMedium
                                             )
+
+                                            // Se il post ha una foto, mostriamo l'iconcina accanto alla scritta della visibilità
+                                            if (!p.photoUrl.isNullOrBlank()) {
+                                                Spacer(Modifier.width(6.dp))
+                                                Icon(
+                                                    imageVector = Icons.Default.Image,
+                                                    contentDescription = "Contiene immagine",
+                                                    modifier = Modifier.size(14.dp), // Piccola per non disturbare
+                                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                                                )
+                                            }
+
                                             Spacer(Modifier.weight(1f))
+
                                             Text(
                                                 text = timeAgoEn(p.createdAtUtc),
                                                 style = MaterialTheme.typography.labelSmall

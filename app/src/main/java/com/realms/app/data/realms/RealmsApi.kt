@@ -103,6 +103,12 @@ interface RealmsApi {
         @Part file: MultipartBody.Part
     ): Response<UploadPictureResponse>
 
+    @Multipart
+    @POST("posts/post-picture") // Quello nuovo che abbiamo creato sopra
+    suspend fun uploadPostPicture(
+        @Part file: MultipartBody.Part
+    ): Response<UploadPictureResponse>
+
 }
 
 // DTO per la risposta (quello che ritorna il tuo BE)

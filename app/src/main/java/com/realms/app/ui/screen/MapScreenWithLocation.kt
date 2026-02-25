@@ -69,6 +69,10 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.material.icons.filled.Settings
@@ -169,6 +173,33 @@ fun MapScreenWithLocation(
     var feedError by remember { mutableStateOf<String?>(null) }
 
     var postRefreshTrigger by remember { mutableStateOf(0) }
+
+
+    // AGGIUNGI FOTO AL POST
+    // --- DENTRO MapScreenWithLocation.kt, vicino agli altri stati del post ---
+    var selectedPostImageUri by remember { mutableStateOf<Uri?>(null) }
+    var tempPhotoUri by remember { mutableStateOf<Uri?>(null) }
+
+    // Launcher per la GALLERIA
+    val postGalleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri -> if (uri != null) selectedPostImageUri = uri }
+
+    // Launcher per la FOTOCAMERA
+    val postCameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success -> if (success) selectedPostImageUri = tempPhotoUri }
+
+    // Funzione helper per creare l'URI della fotocamera
+    fun createTempPictureUri(): Uri {
+        // Usa cacheDir per evitare di chiedere permessi di scrittura sulla memoria esterna
+        val tempFile = java.io.File(context.cacheDir, "camera_tmp.jpg")
+        return androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider", // Deve essere uguale al Manifest
+            tempFile
+        )
+    }
 
 
     // Config mappa
@@ -512,27 +543,36 @@ fun MapScreenWithLocation(
     }
 
 
-    fun createPost(lat: Double, lon: Double, caption: String?, visibility: String) {
+    fun createPost(lat: Double, lon: Double, caption: String?, visibility: String, imageUri: Uri?) {
         scope.launch {
             postsError = null
             try {
+                // Convertiamo l'URI in ByteArray solo se l'utente ha scelto una foto
+                val bytes = imageUri?.let { uri ->
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                }
+
+                // Chiamiamo il repository aggiornato
                 RealmsNetwork.repository.createPost(
                     caption = caption,
-                    photoUrl = null,
                     lat = lat,
                     lon = lon,
-                    visibility = visibility
-                )
+                    visibility = visibility,
+                    imageBytes = bytes
+                ).onSuccess {
+                    // Successo! Facciamo il refresh che abbiamo faticosamente configurato
+                    loadPosts(lat, lon)
+                    postRefreshTrigger++
 
-                // 1. Ricarica i marker sulla mappa
-                loadPosts(lat, lon)
+                    // Pulizia
+                    selectedPostImageUri = null
+                    showCreatePost = false
+                }.onFailure { e ->
+                    postsError = e.message ?: "Errore nella creazione del post"
+                }
 
-                // 2. SCATENA IL REFRESH (come succede alla chiusura dell'edit)
-                postRefreshTrigger++
-
-                showCreatePost = false
             } catch (e: Exception) {
-                postsError = e.message ?: "create post failed"
+                postsError = e.message ?: "Errore generico"
             }
         }
     }
@@ -787,10 +827,53 @@ fun MapScreenWithLocation(
                                     }
 
 
-                                    OutlinedButton(
-                                        onClick = { /* TODO: pick/upload foto */ },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) { Text("Aggiungi foto (TODO)") }
+                                    // Dentro AlertDialog -> text = { Column { ... } }
+                                    if (selectedPostImageUri != null) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(200.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(Color.Black)
+                                        ) {
+                                            AsyncImage(
+                                                model = selectedPostImageUri,
+                                                contentDescription = "Preview post",
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                            IconButton(
+                                                onClick = { selectedPostImageUri = null },
+                                                modifier = Modifier.align(Alignment.TopEnd).background(Color.Black.copy(0.5f), CircleShape)
+                                            ) {
+                                                Icon(Icons.Default.Close, contentDescription = "Rimuovi", tint = Color.White)
+                                            }
+                                        }
+                                    } else {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Button(
+                                                onClick = {
+                                                    val uri = createTempPictureUri()
+                                                    tempPhotoUri = uri
+                                                    postCameraLauncher.launch(uri)
+                                                },
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Text("📷 Camera")
+                                            }
+                                            OutlinedButton(
+                                                onClick = {
+                                                    postGalleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                                },
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Text("🖼️ Galleria")
+                                            }
+                                        }
+                                    }
 
 
                                     if (postsError != null) {
@@ -807,7 +890,7 @@ fun MapScreenWithLocation(
                                     onClick = {
                                         val p = createPostLatLng!!
                                         val cap = createCaption.trim().takeIf { it.isNotBlank() }
-                                        createPost(p.latitude, p.longitude, cap, createVisibility)
+                                        createPost(p.latitude, p.longitude, cap, createVisibility, selectedPostImageUri)
                                         showCreatePost = false
                                     }
                                 ) { Text("Pubblica") }
@@ -1137,9 +1220,23 @@ fun MapScreenWithLocation(
                                     Text(p.caption ?: "Nessun testo")
 
                                     if (!p.photoUrl.isNullOrBlank()) {
-                                        Text("Foto: TODO render")
+                                        Card(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(200.dp)
+                                                .padding(vertical = 8.dp),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            AsyncImage(
+                                                model = p.photoUrl,
+                                                contentDescription = "Immagine del post",
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                        }
                                     } else {
-                                        Text("Nessuna foto")
+                                        // Possiamo anche non mettere nulla se non c'è la foto, per pulizia
+                                        Text("Nessuna foto", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                                     }
 
                                     if (postsError != null) {

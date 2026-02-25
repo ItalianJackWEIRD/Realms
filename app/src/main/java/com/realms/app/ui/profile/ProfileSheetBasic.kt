@@ -45,7 +45,7 @@ import java.time.Duration
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import com.google.gson.annotations.SerializedName
-
+import androidx.compose.material.icons.filled.Image
 
 data class BasicProfileUi(
     val username: String,
@@ -853,13 +853,37 @@ private fun UserPostRow(
 
                 Spacer(Modifier.height(4.dp))
 
-                Text(
-                    text = if (captionShort.isNotBlank()) captionShort else "—",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.78f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                // Sostituisci il vecchio blocco Text con questo:
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // 1. Mostra l'icona solo se è presente una foto
+                    if (!post.photoUrl.isNullOrBlank()) {
+                        Icon(
+                            imageVector = Icons.Default.Image,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = Color.White.copy(alpha = 0.7f)
+                        )
+                        // Spazio tra icona e il trattino
+                        Spacer(Modifier.width(4.dp))
+                    }
+
+                    // 2. Il trattino separatore (sempre presente o condizionale)
+                    Text(
+                        text = "— ",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.5f)
+                    )
+
+                    // 3. Il testo della caption
+                    Text(
+                        text = if (captionShort.isNotBlank()) captionShort else "No text",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.78f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false) // Evita che il testo spinga fuori l'icona
+                    )
+                }
             }
         }
     }

@@ -139,20 +139,37 @@ class RealmsRepository(
     // ==== POST ====
     suspend fun createPost(
         caption: String?,
-        photoUrl: String?,
         lat: Double,
         lon: Double,
-        visibility: String = "PUBLIC"
-    ): CreatePostResponse {
-        return api.create(
+        visibility: String = "PUBLIC",
+        imageBytes: ByteArray? = null // Nuovo parametro opzionale
+    ): Result<CreatePostResponse> = runCatching {
+
+        var uploadedUrl: String? = null
+
+        // 1. Se ci sono bytes dell'immagine, facciamo l'upload prima di tutto
+        if (imageBytes != null) {
+            val requestFile = imageBytes.toRequestBody("image/jpeg".toMediaTypeOrNull())
+            val body = MultipartBody.Part.createFormData("file", "post_image.jpg", requestFile)
+
+            // Usiamo l'endpoint di upload esistente per i post
+            val uploadRes = api.uploadPostPicture(body)
+            if (!uploadRes.isSuccessful) error("Upload immagine fallito: ${uploadRes.code()}")
+            uploadedUrl = uploadRes.body()?.url
+        }
+
+        // 2. Creiamo il post con l'URL dell'immagine (se presente) o null
+        val res = api.create(
             CreatePostRequest(
                 caption = caption,
-                photoUrl = photoUrl,
+                photoUrl = uploadedUrl,
                 latitude = lat,
                 longitude = lon,
                 visibility = visibility
             )
         )
+
+        res // Restituisce la CreatePostResponse
     }
 
     suspend fun getMapPosts(
@@ -182,6 +199,16 @@ class RealmsRepository(
         if (!res.isSuccessful) error("uploadProfilePicture HTTP ${res.code()}")
 
         res.body()?.url ?: error("Empty response body")
+    }
+
+    suspend fun uploadPostPicture(imageBytes: ByteArray): Result<String> = runCatching {
+        val requestFile = imageBytes.toRequestBody("image/jpeg".toMediaTypeOrNull())
+        val body = MultipartBody.Part.createFormData("file", "post.jpg", requestFile)
+
+        val res = api.uploadPostPicture(body) // Usa la nuova API
+        if (!res.isSuccessful) error("Upload post fallito: ${res.code()}")
+
+        res.body()?.url ?: error("URL vuoto")
     }
 
 }
