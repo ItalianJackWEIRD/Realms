@@ -60,6 +60,7 @@ data class BasicProfileUi(
 @Composable
 fun ProfileBottomSheetBasic(
     profile: BasicProfileUi,
+    postRefreshTrigger: Int,
     onLoadUserProfile: suspend (userId: String) -> Result<UserProfileDto>,
     friendsCount: Int,
     friends: List<FriendDto>,
@@ -139,7 +140,7 @@ fun ProfileBottomSheetBasic(
         myPostsLoading = false
     }
 
-    LaunchedEffect(myUserId) {
+    LaunchedEffect(myUserId, postRefreshTrigger) {
         if (myUserId != null) refreshMyPosts()
     }
 
@@ -820,7 +821,6 @@ private fun UserPostRow(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // avatar (placeholder per ora)
             Box(
                 modifier = Modifier
                     .size(44.dp)
@@ -828,7 +828,16 @@ private fun UserPostRow(
                     .background(Color.Black),
                 contentAlignment = Alignment.Center
             ) {
-                Text("👤", color = Color.White)
+                if (!post.owner?.profilePhotoUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = post.owner?.profilePhotoUrl,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Text("👤", color = Color.White)
+                }
             }
 
             Spacer(Modifier.width(12.dp))

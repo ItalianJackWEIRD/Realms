@@ -81,6 +81,8 @@ import androidx.compose.material.icons.filled.LockOpen
 import java.time.Instant
 import com.realms.app.ui.feed.FeedOverlay
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import com.realms.app.ui.utils.timeAgoEn
 import com.realms.app.ui.viewmodel.EditProfileViewModel
 
@@ -165,6 +167,8 @@ fun MapScreenWithLocation(
     var feedPosts by remember { mutableStateOf<List<MapPostDto>>(emptyList()) }
     var feedLoading by remember { mutableStateOf(false) }
     var feedError by remember { mutableStateOf<String?>(null) }
+
+    var postRefreshTrigger by remember { mutableStateOf(0) }
 
 
     // Config mappa
@@ -519,7 +523,14 @@ fun MapScreenWithLocation(
                     lon = lon,
                     visibility = visibility
                 )
+
+                // 1. Ricarica i marker sulla mappa
                 loadPosts(lat, lon)
+
+                // 2. SCATENA IL REFRESH (come succede alla chiusura dell'edit)
+                postRefreshTrigger++
+
+                showCreatePost = false
             } catch (e: Exception) {
                 postsError = e.message ?: "create post failed"
             }
@@ -598,6 +609,7 @@ fun MapScreenWithLocation(
     } else {
         ProfileBottomSheetBasic(
             profile = profile,
+            postRefreshTrigger = postRefreshTrigger,
             onLoadUserProfile = { userId ->
                 RealmsNetwork.repository.getUserProfile(userId)
             },
@@ -963,10 +975,21 @@ fun MapScreenWithLocation(
                                                 modifier = Modifier
                                                     .size(44.dp)
                                                     .clip(CircleShape)
-                                                    .background(Color.Black),
+                                                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Text("👤", color = Color.White)
+                                                // Usiamo l'URL dalla cache dei profili caricata poco sopra nel codice
+                                                val cachedPhotoUrl = selectedUserProfile?.profilePhotoUrl
+                                                if (!cachedPhotoUrl.isNullOrBlank()) {
+                                                    AsyncImage(
+                                                        model = cachedPhotoUrl,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        contentScale = ContentScale.Crop
+                                                    )
+                                                } else {
+                                                    Text("👤", color = Color.White)
+                                                }
                                             }
 
                                             Spacer(Modifier.width(12.dp))
@@ -1043,13 +1066,25 @@ fun MapScreenWithLocation(
                                         modifier = Modifier.padding(12.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        // In MapScreenWithLocation.kt -> showPostPopup -> title
                                         Box(
                                             modifier = Modifier
                                                 .size(36.dp)
                                                 .clip(CircleShape)
-                                                .background(Color.Black),
+                                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)),
                                             contentAlignment = Alignment.Center
-                                        ) { Text("👤", color = Color.White) }
+                                        ) {
+                                            if (!p.owner?.profilePhotoUrl.isNullOrBlank()) {
+                                                AsyncImage(
+                                                    model = p.owner.profilePhotoUrl,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop
+                                                )
+                                            } else {
+                                                Text("👤", color = Color.White)
+                                            }
+                                        }
 
                                         Spacer(Modifier.width(12.dp))
 

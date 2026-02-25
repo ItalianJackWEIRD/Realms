@@ -1,9 +1,11 @@
 package com.realms.app.ui.feed
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -11,7 +13,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.realms.app.data.realms.MapPostDto
 import com.realms.app.ui.utils.timeAgoEn
 
@@ -131,8 +136,40 @@ fun FeedOverlay(
                                         .fillMaxWidth()
                                         .padding(horizontal = 14.dp, vertical = 10.dp)
                                 ) {
-                                    Text(section.username, style = MaterialTheme.typography.titleMedium)
-                                    Spacer(Modifier.height(6.dp))
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        // Avatar piccolo nell'header del feed
+                                        Box(
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            // Recuperiamo l'URL dal campo profilePhotoUrl dell'owner del primo post
+                                            val avatarUrl = section.posts.firstOrNull()?.owner?.profilePhotoUrl
+                                            if (!avatarUrl.isNullOrBlank()) {
+                                                AsyncImage(
+                                                    model = avatarUrl,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop
+                                                )
+                                            } else {
+                                                Text("👤", style = MaterialTheme.typography.bodySmall)
+                                            }
+                                        }
+
+                                        Spacer(Modifier.width(10.dp))
+
+                                        Text(
+                                            text = section.username,
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                    }
+                                    Spacer(Modifier.height(8.dp))
                                     Divider()
                                 }
                             }
