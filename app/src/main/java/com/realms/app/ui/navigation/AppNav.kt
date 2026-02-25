@@ -71,7 +71,7 @@ fun AppNav() {
                             )
                         }
                 },
-                onSignUp = { email, password, username, firstName, lastName, bio, profilePictureUrl ->
+                onSignUp = { email, password, username, firstName, lastName, bio ->
                     uiState = uiState.copy(isLoading = true, errorMessage = null)
 
                     auth.createUserWithEmailAndPassword(email, password)
@@ -82,7 +82,7 @@ fun AppNav() {
                                     firstName = firstName,
                                     lastName = lastName,
                                     bio = bio?.takeIf { it.isNotBlank() },
-                                    profilePictureUrl = profilePictureUrl?.takeIf { it.isNotBlank() }
+                                    profilePictureUrl = null
                                 )
 
                                 if (res.isFailure) {

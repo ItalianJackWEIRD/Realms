@@ -12,7 +12,7 @@ import com.realms.app.auth.AuthUiState
 fun LoginScreen(
     uiState: AuthUiState,
     onSignIn: (String, String) -> Unit,
-    onSignUp: (String, String, String, String, String, String?, String?) -> Unit
+    onSignUp: (String, String, String, String, String, String?) -> Unit
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -22,7 +22,6 @@ fun LoginScreen(
     var firstName by remember { mutableStateOf("") }
     var lastName by remember { mutableStateOf("") }
     var bio by remember { mutableStateOf("") }
-    var profilePictureUrl by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
@@ -95,15 +94,6 @@ fun LoginScreen(
                 label = { Text("Bio (opzionale)") },
                 modifier = Modifier.fillMaxWidth()
             )
-
-            Spacer(Modifier.height(12.dp))
-
-            OutlinedTextField(
-                value = profilePictureUrl,
-                onValueChange = { profilePictureUrl = it },
-                label = { Text("Foto profilo URL (opzionale)") },
-                modifier = Modifier.fillMaxWidth()
-            )
         }
 
         Spacer(Modifier.height(16.dp))
@@ -127,7 +117,6 @@ fun LoginScreen(
                             firstName.trim(),
                             lastName.trim(),
                             bio.trim().ifBlank { null },
-                            profilePictureUrl.trim().ifBlank { null }
                         )
                     } else {
                         onSignIn(email.trim(), password)
