@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import com.realms.app.ui.theme.RealmsTheme
 import com.realms.app.ui.screen.MapScreen
+import com.realms.app.ui.navigation.AppNav
 
 
 class MainActivity : ComponentActivity() {
@@ -21,10 +22,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             RealmsTheme {
-                MapScreen()
+                AppNav()
             }
         }
-
     }
 }
 

@@ -1,0 +1,218 @@
+package com.realms.app.data.realms
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
+
+class RealmsRepository(
+    private val api: RealmsApi
+) {
+    suspend fun updateLocation(latitude: Double, longitude: Double): Result<Unit> = runCatching {
+        val res = api.updateLocation(
+            body = UpdateLocationRequest(latitude, longitude)
+        )
+        if (!res.isSuccessful) error("updateLocation HTTP ${res.code()}")
+    }
+
+    suspend fun getNearbyUsers(
+        latitude: Double,
+        longitude: Double,
+        radiusMeters: Int
+    ): Result<List<NearbyUserDto>> = runCatching {
+        val res = api.getNearbyUsers(
+            lat = latitude,
+            lon = longitude,
+            radiusMeters = radiusMeters
+        )
+        if (!res.isSuccessful) error("getNearbyUsers HTTP ${res.code()}")
+        res.body() ?: emptyList()
+    }
+
+    suspend fun createMe(
+        username: String,
+        firstName: String,
+        lastName: String,
+        bio: String? = null,
+        profilePictureUrl: String? = null
+    ): Result<Unit> = runCatching {
+        val res = api.createMe(
+            CreateMeRequest(
+                username = username,
+                firstName = firstName,
+                lastName = lastName,
+                bio = bio,
+                profilePictureUrl = profilePictureUrl
+            )
+        )
+
+        if (res.isSuccessful) return@runCatching Unit
+        if (res.code() == 409) return@runCatching Unit // già creato
+
+        throw RuntimeException("createMe HTTP ${res.code()}")
+    }
+
+    suspend fun updateMe(
+        username: String,
+        firstName: String,
+        lastName: String,
+        bio: String? = null,
+        profilePhotoUrl: String? = null
+    ): Result<Unit> = runCatching {
+        val res = api.updateMe(
+            UpdateMeRequest(
+                username = username,
+                firstName = firstName,
+                lastName = lastName,
+                bio = bio,
+                profilePhotoUrl = profilePhotoUrl
+            )
+        )
+
+        if (res.isSuccessful) return@runCatching Unit
+
+        // backend: Conflict("username already taken")
+        if (res.code() == 409) throw RuntimeException("username already taken")
+
+        throw RuntimeException("updateMe HTTP ${res.code()}")
+    }
+
+
+    // ===== ME =====
+    suspend fun getMe(): Result<MeDto> = runCatching {
+        val res = api.getMe()
+        if (!res.isSuccessful) error("getMe failed: ${res.code()}")
+        res.body() ?: error("getMe empty body")
+    }
+
+    // ===== FRIENDS =====
+    suspend fun getFriends(): Result<List<FriendDto>> = runCatching {
+        val res = api.getFriends()
+        if (!res.isSuccessful) error("getFriends failed: ${res.code()}")
+        res.body() ?: emptyList()
+    }
+
+    // ===== REQUESTS =====
+    suspend fun sendFriendRequest(toUserId: String): Result<Unit> = runCatching {
+        val res = api.sendFriendRequest(SendFriendRequestRequest(toUserId))
+        if (!res.isSuccessful) error("sendFriendRequest failed: ${res.code()}")
+    }
+
+    suspend fun getIncomingFriendRequests(): Result<List<FriendRequestDto>> = runCatching {
+        val res = api.getIncomingFriendRequests()
+        if (!res.isSuccessful) error("getIncomingFriendRequests failed: ${res.code()}")
+        res.body() ?: emptyList()
+    }
+
+    suspend fun acceptFriendRequest(id: Long): Result<Unit> = runCatching {
+        val res = api.acceptFriendRequest(id)
+        if (!res.isSuccessful) error("acceptFriendRequest failed: ${res.code()}")
+    }
+
+    suspend fun rejectFriendRequest(id: Long): Result<Unit> = runCatching {
+        val res = api.rejectFriendRequest(id)
+        if (!res.isSuccessful) error("rejectFriendRequest failed: ${res.code()}")
+    }
+
+    suspend fun removeFriend(friendUserId: String): Result<Unit> = runCatching {
+        val res = api.removeFriend(friendUserId)
+        if (!res.isSuccessful) error("removeFriend failed: ${res.code()}")
+    }
+
+    // ===== SEARCH =====
+    suspend fun searchUsers(username: String): Result<List<SearchUserDto>> = runCatching {
+        val res = api.searchUsers(username = username, max = 20)
+        if (!res.isSuccessful) error("searchUsers failed: ${res.code()}")
+        res.body() ?: emptyList()
+    }
+
+    suspend fun getUserProfile(id: String): Result<UserProfileDto> = runCatching {
+        val res = api.getUserProfile(id)
+        if (!res.isSuccessful) error("getUserProfile failed: ${res.code()}")
+        res.body() ?: error("getUserProfile empty body")
+    }
+
+    suspend fun getUsernameMap(ids: List<String>): Map<String, String> {
+        if (ids.isEmpty()) return emptyMap()
+        val res = api.getUsernames(UsernamesRequest(ids.distinct()))
+        return res.items.associate { it.id to it.username }
+    }
+
+    // ==== POST ====
+    suspend fun createPost(
+        caption: String?,
+        lat: Double,
+        lon: Double,
+        visibility: String = "PUBLIC",
+        imageBytes: ByteArray? = null // Nuovo parametro opzionale
+    ): Result<CreatePostResponse> = runCatching {
+
+        var uploadedUrl: String? = null
+
+        // 1. Se ci sono bytes dell'immagine, facciamo l'upload prima di tutto
+        if (imageBytes != null) {
+            val requestFile = imageBytes.toRequestBody("image/jpeg".toMediaTypeOrNull())
+            val body = MultipartBody.Part.createFormData("file", "post_image.jpg", requestFile)
+
+            // Usiamo l'endpoint di upload esistente per i post
+            val uploadRes = api.uploadPostPicture(body)
+            if (!uploadRes.isSuccessful) error("Upload immagine fallito: ${uploadRes.code()}")
+            uploadedUrl = uploadRes.body()?.url
+        }
+
+        // 2. Creiamo il post con l'URL dell'immagine (se presente) o null
+        val res = api.create(
+            CreatePostRequest(
+                caption = caption,
+                photoUrl = uploadedUrl,
+                latitude = lat,
+                longitude = lon,
+                visibility = visibility
+            )
+        )
+
+        res // Restituisce la CreatePostResponse
+    }
+
+    suspend fun getMapPosts(
+        lat: Double,
+        lon: Double,
+        radiusMeters: Double = 1000.0,
+        max: Int = 100
+    ): List<MapPostDto> = api.map(lat, lon, radiusMeters, max)
+
+    suspend fun deletePost(id: Int) = api.delete(id)
+
+    suspend fun getUserPosts(userId: String, max: Int = 100): List<MapPostDto> =
+        api.getUserPosts(userId = userId, max = max)
+
+
+    suspend fun getFeedPosts(max: Int = 150): List<MapPostDto> {
+        return api.getFeedPosts(max)
+    }
+
+
+    suspend fun uploadProfilePicture(imageBytes: ByteArray): Result<String> = runCatching {
+        // Prepariamo il body multipart
+        val requestFile = imageBytes.toRequestBody("image/jpeg".toMediaTypeOrNull())
+        val body = MultipartBody.Part.createFormData("file", "profile.jpg", requestFile)
+
+        val res = api.uploadProfilePicture(body)
+        if (!res.isSuccessful) error("uploadProfilePicture HTTP ${res.code()}")
+
+        res.body()?.url ?: error("Empty response body")
+    }
+
+    suspend fun uploadPostPicture(imageBytes: ByteArray): Result<String> = runCatching {
+        val requestFile = imageBytes.toRequestBody("image/jpeg".toMediaTypeOrNull())
+        val body = MultipartBody.Part.createFormData("file", "post.jpg", requestFile)
+
+        val res = api.uploadPostPicture(body) // Usa la nuova API
+        if (!res.isSuccessful) error("Upload post fallito: ${res.code()}")
+
+        res.body()?.url ?: error("URL vuoto")
+    }
+
+}
+
+
+
+

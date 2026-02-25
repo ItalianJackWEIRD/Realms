@@ -1,0 +1,118 @@
+package com.realms.app.data.realms
+
+import retrofit2.Response
+import retrofit2.http.Body
+import retrofit2.http.GET
+import retrofit2.http.POST
+import retrofit2.http.Path
+import retrofit2.http.Query
+import retrofit2.http.DELETE
+import retrofit2.http.PUT
+import okhttp3.MultipartBody
+import retrofit2.http.Multipart
+import retrofit2.http.Part
+interface RealmsApi {
+
+    @POST("locations/update")
+    suspend fun updateLocation(
+        @Body body: UpdateLocationRequest
+    ): Response<Unit>
+
+    @GET("users/nearby")
+    suspend fun getNearbyUsers(
+        @Query("lat") lat: Double,
+        @Query("lon") lon: Double,
+        @Query("radiusMeters") radiusMeters: Int
+    ): Response<List<NearbyUserDto>>
+
+    @POST("users/me")
+    suspend fun createMe(
+        @Body req: CreateMeRequest
+    ): Response<Unit>
+
+    // ===== PROFILE =====
+    @GET("users/me")
+    suspend fun getMe(): Response<MeDto>
+
+    @PUT("users/me")
+    suspend fun updateMe(
+        @Body req: UpdateMeRequest
+    ): Response<Unit>
+
+    // ===== FRIENDS =====
+    @GET("friends")
+    suspend fun getFriends(): Response<List<FriendDto>>
+
+    @POST("friends/requests")
+    suspend fun sendFriendRequest(
+        @Body req: SendFriendRequestRequest
+    ): Response<Unit>
+
+    @GET("friends/requests/incoming")
+    suspend fun getIncomingFriendRequests(): Response<List<FriendRequestDto>>
+
+    @POST("friends/requests/{id}/accept")
+    suspend fun acceptFriendRequest(@Path("id") id: Long): Response<Unit>
+
+    @POST("friends/requests/{id}/reject")
+    suspend fun rejectFriendRequest(@Path("id") id: Long): Response<Unit>
+
+    @DELETE("friends/{friendUserId}")
+    suspend fun removeFriend(@Path("friendUserId") friendUserId: String): Response<Unit>
+
+    @GET("users/search")
+    suspend fun searchUsers(
+        @Query("username") username: String,
+        @Query("max") max: Int = 20
+    ): retrofit2.Response<List<SearchUserDto>>
+
+    @GET("users/{id}/profile")
+    suspend fun getUserProfile(@Path("id") id: String): Response<UserProfileDto>
+
+    @POST("users/usernames")
+    suspend fun getUsernames(@Body req: UsernamesRequest): UsernamesResponse
+
+    @POST("posts")
+    suspend fun create(@Body req: CreatePostRequest): CreatePostResponse
+
+    @GET("posts/map")
+    suspend fun map(
+        @Query("lat") lat: Double,
+        @Query("lon") lon: Double,
+        @Query("radiusMeters") radiusMeters: Double = 1000.0,
+        @Query("max") max: Int = 100
+    ): List<MapPostDto>
+
+    @DELETE("posts/{id}")
+    suspend fun delete(@Path("id") id: Int)
+
+    @GET("posts/user/{userId}")
+    suspend fun getUserPosts(
+        @Path("userId") userId: String,
+        @Query("max") max: Int = 100
+    ): List<MapPostDto>
+
+    @GET("posts/feed")
+    suspend fun getFeedPosts(
+        @Query("max") max: Int = 150
+    ): List<MapPostDto>
+
+    @Multipart
+    @POST("users/profile-picture")
+    suspend fun uploadProfilePicture(
+        @Part file: MultipartBody.Part
+    ): Response<UploadPictureResponse>
+
+    @Multipart
+    @POST("posts/post-picture") // Quello nuovo che abbiamo creato sopra
+    suspend fun uploadPostPicture(
+        @Part file: MultipartBody.Part
+    ): Response<UploadPictureResponse>
+
+}
+
+// DTO per la risposta (quello che ritorna il tuo BE)
+data class UploadPictureResponse(
+    val message: String,
+    val url: String
+)

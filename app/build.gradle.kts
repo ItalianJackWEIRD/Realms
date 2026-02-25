@@ -1,18 +1,19 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    id("com.google.gms.google-services")
+    alias(libs.plugins.kotlin.android) // 🔥 Firebase
+    alias(libs.plugins.ksp)
 }
 
 android {
     namespace = "com.realms.app"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.realms.app"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
 
@@ -28,24 +29,82 @@ android {
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
     buildFeatures {
         compose = true
+    }
+    kotlinOptions {
+        jvmTarget = "11"
     }
 }
 
 dependencies {
+
+    // ---------- CORE ----------
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.compose.material.icons.extended)
+
+    // ---------- COMPOSE ----------
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation("androidx.navigation:navigation-compose:2.8.5")
+
+
+    // ---------- MAPS + LOCATION ----------
+    implementation(libs.play.services.maps)
+    implementation(libs.google.maps.compose)
+    implementation(libs.google.maps.compose.utils)
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+
+    // ---------- 🔥 FIREBASE AUTH ----------
+    implementation(platform("com.google.firebase:firebase-bom:33.6.0"))
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation(libs.core.ktx)
+
+    // ----------- WEATHER API ----------
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.converter.moshi)
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.logging)
+    implementation(libs.moshi)
+    implementation(libs.moshi.kotlin)
+
+    ksp(libs.moshi.kotlin.codegen)
+
+    // -----------  REALMS -----------
+    implementation("com.squareup.retrofit2:retrofit:2.11.0")
+    implementation("com.squareup.retrofit2:converter-moshi:2.11.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
+
+    // ---------- COIL -----------
+    // 1. Coil per caricare le immagini (necessaria per AsyncImage)
+    implementation("io.coil-kt:coil-compose:2.6.0")
+
+    // 2. Icone Material estese (necessaria per AddAPhoto)
+    implementation("androidx.compose.material:material-icons-extended:1.5.4")
+
+    // 3. Retrofit & OkHttp (già dovresti averle, ma per sicurezza)
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+
+    // Dipendenza per SerializedName (Gson)
+    implementation("com.google.code.gson:gson:2.10.1")
+
+    // ---------- TEST ----------
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -53,7 +112,4 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
-    implementation(libs.play.services.maps)
-    implementation(libs.google.maps.compose)
-    implementation(libs.google.maps.compose.utils)
 }
