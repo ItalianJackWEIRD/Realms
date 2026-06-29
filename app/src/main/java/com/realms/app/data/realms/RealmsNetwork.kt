@@ -10,7 +10,9 @@ import java.util.concurrent.TimeUnit
 
 object RealmsNetwork {
 
-    private const val BASE_URL = "https://realms-api-612950264784.europe-west8.run.app/"
+    // ⚠️ DEMO LOCALE: sostituisci 192.168.1.42 con l'IP del TUO PC sulla rete del demo
+    //    (Windows: ipconfig  |  Mac/Linux: ip addr) e lascia la porta 8080.
+    private const val BASE_URL = "http://192.168.0.170:8080/"
 
     private val moshi: Moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
