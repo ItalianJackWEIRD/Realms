@@ -12,7 +12,7 @@ object RealmsNetwork {
 
     // ⚠️ DEMO LOCALE: sostituisci 192.168.1.42 con l'IP del TUO PC sulla rete del demo
     //    (Windows: ipconfig) e lascia la porta 8080.
-    private const val BASE_URL = "http://172.20.10.9:8080/"
+    private const val BASE_URL = "http://10.0.2.2:8080/"
 
     private val moshi: Moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
